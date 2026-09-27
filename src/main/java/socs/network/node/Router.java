@@ -4,6 +4,8 @@ import socs.network.util.Configuration;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 
 
 public class Router {
@@ -14,10 +16,21 @@ public class Router {
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
+  private ServerSocket serverSocket;
 
   public Router(Configuration config) {
-    rd.simulatedIPAddress = config.getString("socs.network.router.ip");
-    lsd = new LinkStateDatabase(rd);
+    try{
+      rd.simulatedIPAddress = config.getString("socs.network.router.ip");
+
+      serverSocket = new ServerSocket(0);
+      rd.processIPAddress = InetAddress.getLocalHost().getHostAddress();
+      rd.processPortNumber = serverSocket.getLocalPort();
+
+      lsd = new LinkStateDatabase(rd);
+
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to intialize router", e);
+    }
   }
 
   /**
@@ -48,7 +61,7 @@ public class Router {
    * <p/>
    * NOTE: this command should not trigger link database synchronization
    */
-  private void processAttach(String processIP, short processPort,
+  private void processAttach(String processIP, int processPort,
                              String simulatedIP, short weight) {
 
   }
@@ -77,7 +90,7 @@ public class Router {
    * <p/>
    * This command does trigger the link database synchronization
    */
-  private void processConnect(String processIP, short processPort,
+  private void processConnect(String processIP, int processPort,
                               String simulatedIP, short weight) {
 
   }
@@ -99,7 +112,7 @@ public class Router {
   /**
    * update the weight of an attached link
    */
-  private void updateWeight(String processIP, short processPort,
+  private void updateWeight(String processIP, int processPort,
                              String simulatedIP, short weight){
 
   }
@@ -158,6 +171,16 @@ public class Router {
   }
 
   public void terminal() {
+    System.out.println("========================================");
+    System.out.println();
+    System.out.println("Process IP      : " + rd.processIPAddress);
+    System.out.println();
+    System.out.println("Process Port    : " + rd.processPortNumber);
+    System.out.println();
+    System.out.println("Simulated IP    : " + rd.simulatedIPAddress);
+    System.out.println();
+    System.out.println("========================================");
+
     try {
       InputStreamReader isReader = new InputStreamReader(System.in);
       BufferedReader br = new BufferedReader(isReader);
@@ -174,13 +197,13 @@ public class Router {
           processQuit();
         } else if (command.startsWith("attach ")) {
           String[] cmdLine = command.split(" ");
-          processAttach(cmdLine[1], Short.parseShort(cmdLine[2]),
+          processAttach(cmdLine[1], Integer.parseInt(cmdLine[2]),
                   cmdLine[3], Short.parseShort(cmdLine[4]));
         } else if (command.equals("start")) {
           processStart();
-        } else if (command.equals("connect ")) {
+        } else if (command.startsWith("connect ")) {
           String[] cmdLine = command.split(" ");
-          processConnect(cmdLine[1], Short.parseShort(cmdLine[2]),
+          processConnect(cmdLine[1], Integer.parseInt(cmdLine[2]),
                   cmdLine[3], Short.parseShort(cmdLine[4]));
         } else if (command.equals("neighbors")) {
           //output neighbors

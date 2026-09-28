@@ -175,6 +175,12 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
 
       if (request.sospfType != 0){
+        if(request.sospfType==1){
+          handleLSAUpdate(request);
+          socket.close();
+          return;
+        }
+
         socket.close();
         return;
       }
@@ -183,6 +189,7 @@ public class Router {
         if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
           link.router2.status= link.router2
                   .status==RouterStatus.INIT? RouterStatus.INIT : RouterStatus.TWO_WAY;
+          System.out.println("set " + link.router2.simulatedIPAddress + " STATE to " + link.router2.status);
           SOSPFPacket hello = buildPacket(rd.simulatedIPAddress,(short) 0);
           out.writeObject(hello);
           out.flush();
@@ -255,7 +262,7 @@ public class Router {
    * broadcast Hello to neighbors
    */
   private synchronized void broadcastLSAUpdate(LSA lsa,String fromSimulatedIP) {
-    // 1. Create packet with sospfType = 1
+    //Create packet with sospfType = 1
     SOSPFPacket lsaPacket = new SOSPFPacket();
     lsaPacket.sospfType = 1; // 1 = LSA update
     lsaPacket.srcProcessIP = rd.processIPAddress;
@@ -265,10 +272,8 @@ public class Router {
     lsaPacket.lsaArray.add(lsa);
 
 
-    // 2. Flood to all neighbors that are connected and in TWO_WAY status
     for (Link link : ports) {
       if (link != null && link.router2 != null && link.router2.status == RouterStatus.TWO_WAY) {
-        // Do not send back to the neighbor that sent us this update!
         if (fromSimulatedIP != null && link.router2.simulatedIPAddress.equals(fromSimulatedIP)) {
           continue;
         }
@@ -289,14 +294,11 @@ public class Router {
     for (LSA incomingLSA : packet.lsaArray) {
       String originatingIP = incomingLSA.linkStateID;
 
-      // 1. Check if this LSA is newer than what we have in lsd
       LSA existingLSA = this.lsd._store.get(originatingIP);
 
       if (existingLSA == null || incomingLSA.lsaSeqNumber > existingLSA.lsaSeqNumber) {
-        // 2. Update local database
        this.lsd._store.put(originatingIP, incomingLSA);
 
-        // 3. Flood this LSA to all other neighbors (Split Horizon rule)
         broadcastLSAUpdate(incomingLSA, packet.srcIP);
       }
     }
@@ -310,7 +312,7 @@ public class Router {
         }
       RouterDescription r2 = link.router2;
 
-      // Build "attach" request message
+
       Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
       SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
 
@@ -329,7 +331,7 @@ public class Router {
         continue;
       }
         r2.status = RouterStatus.TWO_WAY;
-        System.out.println("Set link status to TWO_WAY for " + r2.simulatedIPAddress);
+        System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY");
         out.writeObject(hello);
         out.flush();
 

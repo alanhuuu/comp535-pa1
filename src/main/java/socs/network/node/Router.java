@@ -18,6 +18,11 @@ public class Router {
 
   RouterDescription rd = new RouterDescription();
 
+  // Create a shared BufferedReader for reading user input from the console
+  private final BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+  private volatile boolean attachRequestPending = false;
+  private volatile String attachResponse = null;
+
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
   private ServerSocket serverSocket;
@@ -187,8 +192,13 @@ public class Router {
       System.out.println();
       System.out.println("Do you accept this request? (Y/N)");
 
-      BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
-      String response = br.readLine();
+      attachRequestPending = true;
+      while (attachResponse == null) {
+        Thread.sleep(10);
+      }
+      String response = attachResponse;
+      attachResponse = null;
+      attachRequestPending = false;
 
       if (response.equalsIgnoreCase("Y")) {
         RouterDescription remoteRouter = new RouterDescription();
@@ -323,11 +333,14 @@ public class Router {
     System.out.println("========================================");
 
     try {
-      InputStreamReader isReader = new InputStreamReader(System.in);
-      BufferedReader br = new BufferedReader(isReader);
-      System.out.print(">> ");
-      String command = br.readLine();
       while (true) {
+        System.out.print(">> ");
+        String command = br.readLine();
+        if (attachRequestPending) {
+          attachResponse = command;
+          continue;
+        }
+
         if (command.startsWith("detect ")) {
           String[] cmdLine = command.split(" ");
           processDetect(cmdLine[1]);
@@ -369,11 +382,7 @@ public class Router {
           //invalid command
           break;
         }
-        System.out.print(">> ");
-        command = br.readLine();
       }
-      isReader.close();
-      br.close();
     } catch (Exception e) {
       e.printStackTrace();
     }

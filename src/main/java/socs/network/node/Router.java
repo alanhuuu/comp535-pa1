@@ -198,7 +198,6 @@ public class Router {
       }
       String response = attachResponse;
       attachResponse = null;
-      attachRequestPending = false;
 
       if (response.equalsIgnoreCase("Y")) {
         RouterDescription remoteRouter = new RouterDescription();
@@ -224,6 +223,9 @@ public class Router {
     }
     catch (Exception e){
       System.out.println("Failed to process the request from the remote router.");
+    }
+    finally {
+      attachRequestPending = false;
     }
   }
 
@@ -338,6 +340,9 @@ public class Router {
         String command = br.readLine();
         if (attachRequestPending) {
           attachResponse = command;
+          while (attachRequestPending) {
+            Thread.sleep(10);
+          }
           continue;
         }
 

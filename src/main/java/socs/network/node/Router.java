@@ -252,7 +252,13 @@ public class Router {
    * output the neighbors of the routers
    */
   private void processNeighbors() {
+    for (int i = 0; i < ports.length; i++){
+        if (ports[i] != null &&
+            ports[i].router2.status == RouterStatus.TWO_WAY) {
 
+            System.out.println(ports[i].router2.simulatedIPAddress);
+        }
+    }
   }
 
   /**

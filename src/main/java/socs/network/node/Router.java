@@ -1,11 +1,15 @@
 package socs.network.node;
 
+import socs.network.message.SOSPFPacket;
 import socs.network.util.Configuration;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 
 
 public class Router {
@@ -27,6 +31,10 @@ public class Router {
       rd.processPortNumber = serverSocket.getLocalPort();
 
       lsd = new LinkStateDatabase(rd);
+
+      // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
+      Thread listenerThread  = new Thread(this::listener);
+      listenerThread.start();
 
     } catch (Exception e) {
       throw new RuntimeException("Failed to intialize router", e);
@@ -61,19 +69,152 @@ public class Router {
    * <p/>
    * NOTE: this command should not trigger link database synchronization
    */
-  private void processAttach(String processIP, int processPort,
-                             String simulatedIP, short weight) {
+  private void processAttach(String processIP, int processPort, String simulatedIP, short weight) {
+    try{
+      // Finding an empty port to attach the link
+      int freePortIdx = -1;
 
+      for (int i = 0; i < ports.length; i++) {
+        if (ports[i] == null) {
+          freePortIdx = i;
+          break;
+        }
+      }
+
+      if (freePortIdx == -1) {
+        System.out.println("No available ports.");
+        return;
+      }
+      
+      Socket socket = new Socket(processIP, processPort);
+
+      // Build "attach" request message
+      SOSPFPacket hello = new SOSPFPacket();
+
+      hello.srcProcessIP = rd.processIPAddress;
+      hello.srcProcessPort = rd.processPortNumber;
+      hello.srcIP = rd.simulatedIPAddress;
+      hello.dstIP = simulatedIP;
+      hello.sospfType = 0;
+      hello.neighborID = rd.simulatedIPAddress;
+      hello.weight = weight;
+      
+      ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+      out.flush();
+      ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+
+      out.writeObject(hello);
+      out.flush();
+
+      boolean accepted = in.readBoolean();
+
+      if(!accepted) {
+        System.out.println("Your attach request has been rejected;");
+        socket.close();
+        return;
+      }
+
+      RouterDescription remoteRouter = new RouterDescription();
+
+      remoteRouter.processIPAddress = processIP;
+      remoteRouter.processPortNumber = processPort;
+      remoteRouter.simulatedIPAddress = simulatedIP;
+
+      ports[freePortIdx] = new Link(rd, remoteRouter);
+
+      System.out.println("Your attach request has been accepted;");
+
+      socket.close();
+
+    }
+    catch (Exception e){
+      System.out.println("Failed to connect to the remote router. Please check the process IP and process port.");
+    }
+    
   }
 
+  private void listener(){
+    while(true){
+      try{
+        Socket socket = serverSocket.accept();
+
+        requestHandler(socket);
+      }
+      catch (Exception e){
+        System.out.println("Failed to accept the connection from the remote router.");
+      }
+    }
+  }
 
   /**
    * process request from the remote router. 
    * For example: when router2 tries to attach router1. Router1 can decide whether it will accept this request. 
    * The intuition is that if router2 is an unknown/anomaly router, it is always safe to reject the attached request from router2.
    */
-  private void requestHandler() {
+  private void requestHandler(Socket socket) {
+    try{
+      ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+      out.flush();
+      ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 
+      SOSPFPacket request = (SOSPFPacket) in.readObject();
+
+      if (request.sospfType != 0){
+        socket.close();
+        return;
+      }
+
+      int freePortIdx = -1;
+
+      for (int i = 0; i < ports.length; i++) {
+        if (ports[i] == null) {
+          freePortIdx = i;
+          break;
+        }
+      }
+
+      if (freePortIdx == -1) {
+        out.writeBoolean(false);
+        out.flush();
+
+        System.out.println("No available ports.");
+        socket.close();
+        return;
+      }
+
+      System.out.println();
+      System.out.println("received HELLO from " + request.srcIP + ";");
+      System.out.println();
+      System.out.println("Do you accept this request? (Y/N)");
+
+      BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+      String response = br.readLine();
+
+      if (response.equalsIgnoreCase("Y")) {
+        RouterDescription remoteRouter = new RouterDescription();
+        remoteRouter.processIPAddress = request.srcProcessIP;
+        remoteRouter.processPortNumber = request.srcProcessPort;
+        remoteRouter.simulatedIPAddress = request.srcIP;
+
+        ports[freePortIdx] = new Link(rd, remoteRouter);
+
+        out.writeBoolean(true);
+        out.flush();
+
+        System.out.println("You have accepted the attach request from " + request.srcIP);
+        socket.close();
+      } 
+      else {
+        out.writeBoolean(false);
+        out.flush();
+        System.out.println("You have rejected the attach request from " + request.srcIP);
+        socket.close();
+        return;
+      }
+    }
+    catch (Exception e){
+      System.out.println("Failed to process the request from the remote router.");
+    }
   }
 
   /**

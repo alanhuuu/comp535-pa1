@@ -1,5 +1,7 @@
 package socs.network.node;
 
+
+import socs.network.message.LSA;
 import socs.network.message.SOSPFPacket;
 import socs.network.util.Configuration;
 
@@ -10,6 +12,8 @@ import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.sql.SQLOutput;
+import java.util.Vector;
 
 
 public class Router {
@@ -45,7 +49,18 @@ public class Router {
       throw new RuntimeException("Failed to intialize router", e);
     }
   }
+  private SOSPFPacket buildPacket(String simulatedIPAddress, short type) {
+    SOSPFPacket hello = new SOSPFPacket();
 
+    hello.srcProcessIP = rd.processIPAddress;
+    hello.srcProcessPort = rd.processPortNumber;
+    hello.srcIP = rd.simulatedIPAddress;
+    hello.dstIP = simulatedIPAddress;
+    hello.sospfType = type;
+    hello.neighborID = rd.simulatedIPAddress;
+    return hello;
+
+  }
   /**
    * output the shortest path to the given destination ip
    * <p/>
@@ -53,6 +68,7 @@ public class Router {
    *
    * @param destinationIP the ip adderss of the destination simulated router
    */
+
   private void processDetect(String destinationIP) {
 
   }
@@ -94,14 +110,7 @@ public class Router {
       Socket socket = new Socket(processIP, processPort);
 
       // Build "attach" request message
-      SOSPFPacket hello = new SOSPFPacket();
-
-      hello.srcProcessIP = rd.processIPAddress;
-      hello.srcProcessPort = rd.processPortNumber;
-      hello.srcIP = rd.simulatedIPAddress;
-      hello.dstIP = simulatedIP;
-      hello.sospfType = 0;
-      hello.neighborID = rd.simulatedIPAddress;
+      SOSPFPacket hello = buildPacket(simulatedIP,(short) 0);
       hello.weight = weight;
       
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
@@ -133,6 +142,7 @@ public class Router {
 
     }
     catch (Exception e){
+      System.out.println(e.toString());
       System.out.println("Failed to connect to the remote router. Please check the process IP and process port.");
     }
     
@@ -146,6 +156,7 @@ public class Router {
         requestHandler(socket);
       }
       catch (Exception e){
+        System.out.println(e.toString());
         System.out.println("Failed to accept the connection from the remote router.");
       }
     }
@@ -158,6 +169,7 @@ public class Router {
    */
   private void requestHandler(Socket socket) {
     try{
+      System.out.println("in here again");
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
       out.flush();
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
@@ -165,8 +177,43 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
 
       if (request.sospfType != 0){
+       /* if(request.sospfType==1) {
+          handleLSAUpdate(request);
+          socket.close();
+          return;
+        }*/
         socket.close();
         return;
+      }
+      for(Link link : ports){
+
+        if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
+          System.out.println("received HELLO from " + request.srcIP + ";");
+          if (link.router2.status == null) {
+            link.router2.status = RouterStatus.INIT;
+
+            System.out.println(
+                    "set " + link.router2.simulatedIPAddress + " STATE to INIT;"
+            );
+
+            SOSPFPacket hello = buildPacket(request.srcIP, (short) 0);
+            out.writeObject(hello);
+            out.flush();
+            SOSPFPacket response = (SOSPFPacket) in.readObject();
+            if(response.sospfType!=0){
+              System.out.println("3 way handshake failed");
+              socket.close();
+              return;
+            }
+            System.out.println("received HELLO from " + request.srcIP + ";");
+            link.router2.status = RouterStatus.TWO_WAY;
+            System.out.println(
+                    "set " + link.router2.simulatedIPAddress + " STATE to TWO_WAY;"
+            );
+          }
+          socket.close();
+          return;
+        }
       }
 
       int freePortIdx = -1;
@@ -222,6 +269,7 @@ public class Router {
       }
     }
     catch (Exception e){
+      System.out.println(e.toString());
       System.out.println("Failed to process the request from the remote router.");
     }
     finally {
@@ -232,7 +280,94 @@ public class Router {
   /**
    * broadcast Hello to neighbors
    */
+  /*
+  private synchronized void broadcastLSAUpdate(LSA lsa,String fromSimulatedIP) {
+    //Create packet with sospfType = 1
+    SOSPFPacket lsaPacket = new SOSPFPacket();
+    lsaPacket.sospfType = 1; // 1 = LSA update
+    lsaPacket.srcProcessIP = rd.processIPAddress;
+    lsaPacket.srcProcessPort = rd.processPortNumber;
+    lsaPacket.srcIP = rd.simulatedIPAddress;
+    lsaPacket.lsaArray = new Vector<>();
+    lsaPacket.lsaArray.add(lsa);
+
+
+    for (Link link : ports) {
+      if (link != null && link.router2 != null && link.router2.status == RouterStatus.TWO_WAY) {
+        if (fromSimulatedIP != null && link.router2.simulatedIPAddress.equals(fromSimulatedIP)) {
+          continue;
+        }
+
+        try (Socket socket = new Socket(link.router2.processIPAddress, link.router2.processPortNumber);
+             ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+
+          out.writeObject(lsaPacket);
+          out.flush();
+
+        } catch (Exception e) {
+          System.err.println("Failed to send LSA update to " + link.router2.simulatedIPAddress);
+        }
+      }
+    }
+  }
+  private void handleLSAUpdate(SOSPFPacket packet) {
+    for (LSA incomingLSA : packet.lsaArray) {
+      String originatingIP = incomingLSA.linkStateID;
+
+      LSA existingLSA = this.lsd._store.get(originatingIP);
+
+      if (existingLSA == null || incomingLSA.lsaSeqNumber > existingLSA.lsaSeqNumber) {
+       this.lsd._store.put(originatingIP, incomingLSA);
+
+        broadcastLSAUpdate(incomingLSA, packet.srcIP);
+      }
+    }
+  }
+*/
   private void processStart() {
+    for(Link link : ports) {
+      try{
+        if(link==null || link.router2==null){
+          continue;
+        }
+      RouterDescription r2 = link.router2;
+
+
+      Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
+      SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
+
+      ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+      out.flush();
+      ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+
+      out.writeObject(hello);
+      out.flush();
+
+      SOSPFPacket response = (SOSPFPacket) in.readObject();
+
+      if(response==null || response.sospfType!=0) {
+        System.out.println("Your Init request has been rejected;");
+        socket.close();
+        continue;
+      }
+        System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
+        r2.status = RouterStatus.TWO_WAY;
+        System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
+        out.writeObject(hello);
+        out.flush();
+        /*
+        SOSPFPacket update = buildPacket(r2.simulatedIPAddress,(short) 1);
+        update.lsaArray = new Vector<>(this.lsd._store.values());
+        out.writeObject(update);
+        out.flush();
+        socket.close();*/
+
+    }
+      catch(Exception e){
+        System.out.println("Failed to process the request from the remote router.");
+
+      }}
+
 
   }
 

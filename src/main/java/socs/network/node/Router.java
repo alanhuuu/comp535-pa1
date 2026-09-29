@@ -12,6 +12,7 @@ import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.sql.SQLOutput;
 import java.util.Vector;
 
 
@@ -168,6 +169,7 @@ public class Router {
    */
   private void requestHandler(Socket socket) {
     try{
+      System.out.println("in here again");
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
       out.flush();
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
@@ -186,12 +188,30 @@ public class Router {
       for(Link link : ports){
 
         if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
-          link.router2.status= link.router2
-                  .status==RouterStatus.INIT? RouterStatus.INIT : RouterStatus.TWO_WAY;
-          System.out.println("set " + link.router2.simulatedIPAddress + " STATE to " + link.router2.status);
-          SOSPFPacket hello = buildPacket(rd.simulatedIPAddress,(short) 0);
-          out.writeObject(hello);
-          out.flush();
+          System.out.println("received HELLO from " + request.srcIP + ";");
+          if (link.router2.status == null) {
+            link.router2.status = RouterStatus.INIT;
+
+            System.out.println(
+                    "set " + link.router2.simulatedIPAddress + " STATE to INIT;"
+            );
+
+            SOSPFPacket hello = buildPacket(request.srcIP, (short) 0);
+            out.writeObject(hello);
+            out.flush();
+            SOSPFPacket response = (SOSPFPacket) in.readObject();
+            if(response.sospfType!=0){
+              System.out.println("3 way handshake failed");
+              socket.close();
+              return;
+            }
+            System.out.println("received HELLO from " + request.srcIP + ";");
+            link.router2.status = RouterStatus.TWO_WAY;
+            System.out.println(
+                    "set " + link.router2.simulatedIPAddress + " STATE to TWO_WAY;"
+            );
+          }
+          socket.close();
           return;
         }
       }
@@ -330,8 +350,9 @@ public class Router {
         socket.close();
         continue;
       }
+        System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
         r2.status = RouterStatus.TWO_WAY;
-        System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY");
+        System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
         out.writeObject(hello);
         out.flush();
         /*

@@ -175,12 +175,11 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
 
       if (request.sospfType != 0){
-        if(request.sospfType==1){
+       /* if(request.sospfType==1) {
           handleLSAUpdate(request);
           socket.close();
           return;
-        }
-
+        }*/
         socket.close();
         return;
       }
@@ -261,6 +260,7 @@ public class Router {
   /**
    * broadcast Hello to neighbors
    */
+  /*
   private synchronized void broadcastLSAUpdate(LSA lsa,String fromSimulatedIP) {
     //Create packet with sospfType = 1
     SOSPFPacket lsaPacket = new SOSPFPacket();
@@ -303,7 +303,7 @@ public class Router {
       }
     }
   }
-
+*/
   private void processStart() {
     for(Link link : ports) {
       try{
@@ -334,12 +334,12 @@ public class Router {
         System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY");
         out.writeObject(hello);
         out.flush();
-
+        /*
         SOSPFPacket update = buildPacket(r2.simulatedIPAddress,(short) 1);
         update.lsaArray = new Vector<>(this.lsd._store.values());
         out.writeObject(update);
         out.flush();
-        socket.close();
+        socket.close();*/
 
     }
       catch(Exception e){

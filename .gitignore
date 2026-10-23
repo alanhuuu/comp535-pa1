@@ -2,9 +2,13 @@
 
 # Maven build output
 target/
+out/
 
 # Compiled Java files
-.class
+*.class
 
 # Packaged artifacts
-.jar
+*.jar
+
+# Generated compiler file lists
+*.lst

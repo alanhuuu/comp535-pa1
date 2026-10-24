@@ -3,7 +3,10 @@ package socs.network.node;
 import socs.network.message.LSA;
 import socs.network.message.LinkDescription;
 
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.PriorityQueue;
 
 public class LinkStateDatabase {
 
@@ -29,8 +32,47 @@ public class LinkStateDatabase {
    * @param destinationIP the simulated IP address of the destination router
    * @return the shortest path as a string, or null if no path exists
    */
-  String getShortestPath(String destinationIP) {
-    //TODO: fill the implementation here
+  int getShortestPath(String destinationIP) {
+    HashMap<String, Integer> dist = new HashMap<>();
+    HashMap<String, String> prev = new HashMap<>();
+    PriorityQueue<Map.Entry<String, Integer>> pq = new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
+
+    String sourceIP = rd.simulatedIPAddress;
+
+    dist.put(sourceIP, 0);
+
+    for (String routerID : _store.keySet()) {
+      if (!routerID.equals(sourceIP)) {
+        dist.put(routerID, Integer.MAX_VALUE);
+      }
+      prev.put(routerID, null);
+    }
+
+
+    while (!pq.isEmpty()){
+      Map.Entry<String, Integer> current = pq.poll();
+
+      String currentRouterID = current.getKey();
+      int distance = current.getValue();
+
+      if (distance > dist.get(currentRouterID)) {
+        continue;
+      }
+
+      for (LinkDescription link : _store.get(currentRouterID).links) {
+        String neighborID = link.linkID;
+        int weight = link.weight;
+        
+        int newDist = dist.get(currentRouterID) + weight;
+        if (newDist < dist.get(neighborID)) {
+          dist.put(neighborID, newDist);
+          prev.put(neighborID, currentRouterID);
+          pq.offer(Map.entry(neighborID, newDist));
+        }
+
+      }
+
+
     return null;
   }
 

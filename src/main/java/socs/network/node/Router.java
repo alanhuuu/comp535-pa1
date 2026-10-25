@@ -86,8 +86,13 @@ public class Router {
    */
 
   private void processDetect(String destinationIP) {
-    
+    String path = lsd.getShortestPath(destinationIP);
 
+    if (path != null) {
+      System.out.println("Path found: " + path);
+    } else {
+      System.out.println("Path not found");
+    }
   }
 
   /**

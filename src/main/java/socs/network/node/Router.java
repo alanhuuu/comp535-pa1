@@ -154,6 +154,7 @@ public class Router {
         Socket socket = serverSocket.accept();
 
         requestHandler(socket);
+        System.out.println("Back here");
       }
       catch (Exception e){
         System.out.println(e.toString());
@@ -175,7 +176,7 @@ public class Router {
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 
       SOSPFPacket request = (SOSPFPacket) in.readObject();
-
+      System.out.println();
       if (request.sospfType != 0){
         if(request.sospfType==1) {
           handleLSAUpdate(request);
@@ -210,6 +211,12 @@ public class Router {
             System.out.println(
                     "set " + link.router2.simulatedIPAddress + " STATE to TWO_WAY;"
             );
+            SOSPFPacket update = (SOSPFPacket) in.readObject();
+            if(update.sospfType==1){
+              handleLSAUpdate(update);
+            }
+            else{return;}
+
           }
           socket.close();
           return;
@@ -281,15 +288,16 @@ public class Router {
    * broadcast Hello to neighbors
    */
 
-  private synchronized void broadcastLSAUpdate(LSA lsa,String fromSimulatedIP) {
+  private synchronized void broadcastLSAUpdate(Vector<LSA> lsaArray,String fromSimulatedIP) {
     //Create packet with sospfType = 1
+    System.out.println("Broadcasting LSA to all neighbours");
     SOSPFPacket lsaPacket = new SOSPFPacket();
     lsaPacket.sospfType = 1; // 1 = LSA update
     lsaPacket.srcProcessIP = rd.processIPAddress;
     lsaPacket.srcProcessPort = rd.processPortNumber;
     lsaPacket.srcIP = rd.simulatedIPAddress;
-    lsaPacket.lsaArray = new Vector<>();
-    lsaPacket.lsaArray.add(lsa);
+    lsaPacket.lsaArray = lsaArray;
+
 
 
     for (Link link : ports) {
@@ -300,6 +308,7 @@ public class Router {
 
         try (Socket socket = new Socket(link.router2.processIPAddress, link.router2.processPortNumber);
              ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+          System.out.println("sending update to" + link.router2.simulatedIPAddress + ";");
 
           out.writeObject(lsaPacket);
           out.flush();
@@ -311,16 +320,19 @@ public class Router {
     }
   }
   private void handleLSAUpdate(SOSPFPacket packet) {
+    System.out.println("Received LSA update from " + packet.srcIP + ";");
+    Vector<LSA> lsaArray = new Vector<>();
     for (LSA incomingLSA : packet.lsaArray) {
+      System.out.println(incomingLSA);
       String originatingIP = incomingLSA.linkStateID;
 
       LSA existingLSA = this.lsd._store.get(originatingIP);
 
       if (existingLSA == null || incomingLSA.lsaSeqNumber > existingLSA.lsaSeqNumber) {
        this.lsd._store.put(originatingIP, incomingLSA);
-
-        broadcastLSAUpdate(incomingLSA, packet.srcIP);
-      }
+      lsaArray.add(incomingLSA);
+    }
+      broadcastLSAUpdate(lsaArray, packet.srcIP);
     }
   }
 

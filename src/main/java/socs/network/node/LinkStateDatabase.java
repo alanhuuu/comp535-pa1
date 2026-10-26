@@ -5,8 +5,11 @@ import socs.network.message.LinkDescription;
 
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.ArrayList;
+import java.util.LinkedList;
 
 public class LinkStateDatabase {
 
@@ -33,6 +36,37 @@ public class LinkStateDatabase {
    * @return the shortest path as a string, or null if no path exists
    */
   String getShortestPath(String destinationIP) {
+    List<String> path = getShortestPathRouterIDs(destinationIP);
+
+    if (path == null) {
+      return "Path not found";
+    }
+
+    StringBuilder result = new StringBuilder("Path found: ");
+
+    for (int i = 0; i < path.size(); i++) {
+        String routerID = path.get(i);
+
+        result.append(routerID);
+
+        if (i < path.size() - 1) {
+            String nextRouterID = path.get(i + 1);
+
+            for (LinkDescription link : _store.get(routerID).links) {
+                if (link.linkID.equals(nextRouterID)) {
+                    result.append(" -> (")
+                          .append(link.weight)
+                          .append(") ");
+                    break;
+                }
+            }
+        }
+    }
+
+    return result.toString();
+  }
+
+  List<String> getShortestPathRouterIDs(String destinationIP) {
     HashMap<String, Integer> dist = new HashMap<>();
     HashMap<String, String> prev = new HashMap<>();
     PriorityQueue<Map.Entry<String, Integer>> pq = new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
@@ -89,33 +123,14 @@ public class LinkStateDatabase {
     }
 
     String curr = destinationIP;
-    String stringPath = curr;
+    LinkedList<String> path = new LinkedList<>();
 
-    while (!curr.equals(sourceIP)) {
-      String prevRouter = prev.get(curr);
-
-      if (prevRouter == null) {
-        return null;
-      }
-
-      String targetRouter = curr;
-
-      Integer currWeight = _store.get(prevRouter).links.stream()
-              .filter(link -> link.linkID.equals(targetRouter))
-              .findFirst()
-              .map(link -> link.weight)
-              .orElse(null);
-      
-      if (currWeight == null) {
-        return null;
-      }
-
-      stringPath = String.format("%s -> (%d) %s", prevRouter, currWeight, stringPath);
-      curr = prevRouter;
-      
+    while (curr != null) {
+      path.addFirst(curr);
+      curr = prev.get(curr);
     }
-      
-    return stringPath;
+
+    return path;
   }
 
   //initialize the linkstate database by adding an entry about the router itself

@@ -16,6 +16,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Vector;
+import java.util.List;
 
 
 public class Router {
@@ -86,13 +87,7 @@ public class Router {
    */
 
   private void processDetect(String destinationIP) {
-    String path = lsd.getShortestPath(destinationIP);
-
-    if (path != null) {
-      System.out.println("Path found: " + path);
-    } else {
-      System.out.println("Path not found");
-    }
+    System.out.println(lsd.getShortestPath(destinationIP));
   }
 
   /**
@@ -172,7 +167,7 @@ public class Router {
   }
 
   private void listener(){
-    while(true){
+    while(!serverSocket.isClosed()){
       try{
         Socket socket = serverSocket.accept();
 
@@ -180,6 +175,7 @@ public class Router {
         System.out.println("Back here");
       }
       catch (Exception e){
+        if (serverSocket.isClosed()) return;
         System.out.println(e.toString());
         System.out.println("Failed to accept the connection from the remote router.");
       }
@@ -192,8 +188,7 @@ public class Router {
    * The intuition is that if router2 is an unknown/anomaly router, it is always safe to reject the attached request from router2.
    */
   private void requestHandler(Socket socket) {
-    try{
-      System.out.println("in here again");
+    try (Socket connection = socket) {
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
       out.flush();
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
@@ -201,6 +196,12 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
       this.stats.get(request.sospfType)[0]+=1;
       System.out.println();
+
+      if (request.sospfType == 2) {
+        handleApplicationMessage(request);
+        return;
+      }
+
       if (request.sospfType != 0){
         if(request.sospfType==1) {
           handleLSAUpdate(request);
@@ -568,7 +569,47 @@ public class Router {
    * @param message the message content to send
    */
   private void processSend(String destinationIP, String message) {
+    SOSPFPacket packet = buildPacket(destinationIP, (short) 2);
+    packet.message = message;
+    System.out.println("Sending message to " + destinationIP);
 
+    if (rd.simulatedIPAddress.equals(destinationIP)) {
+      handleApplicationMessage(packet);
+      return;
+    }
+    forwardPacket(packet);
+  }
+
+  private void forwardPacket(SOSPFPacket packet) {
+    List<String> path = lsd.getShortestPathRouterIDs(packet.dstIP);
+    if (path == null || path.size() < 2) {
+      System.out.println("No route to " + packet.dstIP);
+      return;
+    }
+
+    String nextHopIP = path.get(1);
+    for (Link link : ports) {
+      if (link != null && link.router2 != null
+              && link.router2.status == RouterStatus.TWO_WAY
+              && link.router2.simulatedIPAddress.equals(nextHopIP)) {
+        try (Socket socket = new Socket()) {
+          socket.connect(new java.net.InetSocketAddress(link.router2.processIPAddress,
+                  link.router2.processPortNumber), 5000);
+          socket.setSoTimeout(5000);
+          ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+          out.flush();
+
+          new ObjectInputStream(socket.getInputStream());
+          out.writeObject(packet);
+          out.flush();
+          System.out.println("Next hop: " + nextHopIP);
+        } catch (Exception e) {
+          System.err.println("Failed to send to " + nextHopIP + ": " + e.getMessage());
+        }
+        return;
+      }
+    }
+    System.out.println("Next hop is not connected: " + nextHopIP);
   }
 
   /**
@@ -587,7 +628,13 @@ public class Router {
    * @param packet the received application message packet
    */
   private void handleApplicationMessage(socs.network.message.SOSPFPacket packet) {
-
+    if (rd.simulatedIPAddress.equals(packet.dstIP)) {
+      System.out.println("Received message from " + packet.srcIP + ":");
+      System.out.println(packet.message);
+    } else {
+      System.out.println("Forwarding packet from " + packet.srcIP + " to " + packet.dstIP);
+      forwardPacket(packet);
+    }
   }
 
   private void processStats() {

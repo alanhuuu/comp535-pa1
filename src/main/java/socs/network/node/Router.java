@@ -12,7 +12,6 @@ import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.sql.SQLOutput;
 import java.util.Vector;
 
 
@@ -25,6 +24,7 @@ public class Router {
   // Create a shared BufferedReader for reading user input from the console
   private final BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
   private volatile boolean attachRequestPending = false;
+  private volatile boolean startPending = false;
   private volatile String attachResponse = null;
 
   //assuming that all routers are with 4 ports
@@ -189,6 +189,7 @@ public class Router {
       for(Link link : ports){
 
         if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
+            startPending = true;
           System.out.println("received HELLO from " + request.srcIP + ";");
           if (link.router2.status == null) {
             link.router2.status = RouterStatus.INIT;
@@ -204,6 +205,7 @@ public class Router {
             if(response.sospfType!=0){
               System.out.println("3 way handshake failed");
               socket.close();
+              startPending =false;
               return;
             }
             System.out.println("received HELLO from " + request.srcIP + ";");
@@ -215,10 +217,13 @@ public class Router {
             if(update.sospfType==1){
               handleLSAUpdate(update);
             }
-            else{return;}
+            else{
+                startPending =false;
+                return;}
 
           }
           socket.close();
+          startPending =false;
           return;
         }
       }
@@ -346,11 +351,13 @@ public class Router {
 
 
       Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
-      SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
-
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
       out.flush();
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+      if(r2.status!=RouterStatus.TWO_WAY) {
+      SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
+
+
 
       out.writeObject(hello);
       out.flush();
@@ -366,7 +373,7 @@ public class Router {
         r2.status = RouterStatus.TWO_WAY;
         System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
         out.writeObject(hello);
-        out.flush();
+        out.flush();}
 
         SOSPFPacket update = buildPacket(r2.simulatedIPAddress,(short) 1);
         update.lsaArray = new Vector<>(this.lsd._store.values());
@@ -497,6 +504,12 @@ public class Router {
             Thread.sleep(10);
           }
           continue;
+        }
+        if(startPending) {
+            while (startPending) {
+                Thread.sleep(10);
+            }
+            continue;
         }
 
         if (command.startsWith("detect ")) {

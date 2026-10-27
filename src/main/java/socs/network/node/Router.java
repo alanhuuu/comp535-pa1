@@ -1,7 +1,9 @@
-package socs.network.node;
+
+        package socs.network.node;
 
 
 import socs.network.message.LSA;
+import socs.network.message.LinkDescription;
 import socs.network.message.SOSPFPacket;
 import socs.network.util.Configuration;
 
@@ -12,6 +14,7 @@ import java.io.ObjectOutputStream;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
 import java.util.Vector;
 
 
@@ -26,9 +29,13 @@ public class Router {
   private volatile boolean attachRequestPending = false;
   private volatile boolean startPending = false;
   private volatile String attachResponse = null;
+  private HashMap<Short,Integer[]> stats;
+  private HashMap<Short,String> encoding;
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
+  // Store the weight independently of Link (whose API is not supplied).
+  private final short[] portWeights = new short[4];
   private ServerSocket serverSocket;
 
   public Router(Configuration config) {
@@ -40,11 +47,19 @@ public class Router {
       rd.processPortNumber = serverSocket.getLocalPort();
 
       lsd = new LinkStateDatabase(rd);
+      stats = new HashMap<>();
+      encoding = new HashMap<>();
+      for (short type = 0; type < 3; type++) {
+        stats.put(type, new Integer[]{0, 0});
+      }
 
       // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
       Thread listenerThread  = new Thread(this::listener);
       listenerThread.start();
 
+      encoding.put((short) 0,"HELLO");
+      encoding.put((short) 1,"LSAUPDATE");
+      encoding.put((short) 2,"APP_MESSAGE");
     } catch (Exception e) {
       throw new RuntimeException("Failed to intialize router", e);
     }
@@ -58,6 +73,7 @@ public class Router {
     hello.dstIP = simulatedIPAddress;
     hello.sospfType = type;
     hello.neighborID = rd.simulatedIPAddress;
+    this.stats.get(type)[1]+=1;
     return hello;
 
   }
@@ -101,18 +117,19 @@ public class Router {
           break;
         }
       }
+      refreshLocalLSA();
 
       if (freePortIdx == -1) {
         System.out.println("No available ports.");
         return;
       }
-      
+
       Socket socket = new Socket(processIP, processPort);
 
       // Build "attach" request message
       SOSPFPacket hello = buildPacket(simulatedIP,(short) 0);
       hello.weight = weight;
-      
+
       ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
       out.flush();
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
@@ -135,6 +152,7 @@ public class Router {
       remoteRouter.simulatedIPAddress = simulatedIP;
 
       ports[freePortIdx] = new Link(rd, remoteRouter);
+      portWeights[freePortIdx] = weight;
 
       System.out.println("Your attach request has been accepted;");
 
@@ -145,7 +163,7 @@ public class Router {
       System.out.println(e.toString());
       System.out.println("Failed to connect to the remote router. Please check the process IP and process port.");
     }
-    
+
   }
 
   private void listener(){
@@ -164,8 +182,8 @@ public class Router {
   }
 
   /**
-   * process request from the remote router. 
-   * For example: when router2 tries to attach router1. Router1 can decide whether it will accept this request. 
+   * process request from the remote router.
+   * For example: when router2 tries to attach router1. Router1 can decide whether it will accept this request.
    * The intuition is that if router2 is an unknown/anomaly router, it is always safe to reject the attached request from router2.
    */
   private void requestHandler(Socket socket) {
@@ -176,6 +194,7 @@ public class Router {
       ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 
       SOSPFPacket request = (SOSPFPacket) in.readObject();
+      this.stats.get(request.sospfType)[0]+=1;
       System.out.println();
       if (request.sospfType != 0){
         if(request.sospfType==1) {
@@ -189,7 +208,7 @@ public class Router {
       for(Link link : ports){
 
         if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
-            startPending = true;
+          startPending = true;
           System.out.println("received HELLO from " + request.srcIP + ";");
           if (link.router2.status == null) {
             link.router2.status = RouterStatus.INIT;
@@ -210,16 +229,22 @@ public class Router {
             }
             System.out.println("received HELLO from " + request.srcIP + ";");
             link.router2.status = RouterStatus.TWO_WAY;
+            refreshLocalLSA();
             System.out.println(
                     "set " + link.router2.simulatedIPAddress + " STATE to TWO_WAY;"
             );
             SOSPFPacket update = (SOSPFPacket) in.readObject();
             if(update.sospfType==1){
               handleLSAUpdate(update);
+              Vector<LSA> snapshot;
+              synchronized (lsd._store) {
+                snapshot = new Vector<>(lsd._store.values());
+              }
+              sendLSDBToNeighbor(link.router2, snapshot);
             }
             else{
-                startPending =false;
-                return;}
+              startPending =false;
+              return;}
 
           }
           socket.close();
@@ -265,13 +290,14 @@ public class Router {
         remoteRouter.simulatedIPAddress = request.srcIP;
 
         ports[freePortIdx] = new Link(rd, remoteRouter);
+        portWeights[freePortIdx] = request.weight;
 
         out.writeBoolean(true);
         out.flush();
 
         System.out.println("You have accepted the attach request from " + request.srcIP);
         socket.close();
-      } 
+      }
       else {
         out.writeBoolean(false);
         out.flush();
@@ -292,6 +318,39 @@ public class Router {
   /**
    * broadcast Hello to neighbors
    */
+
+  /** Rebuild our own advertisement from established (TWO_WAY) links. */
+  private LSA refreshLocalLSA() {
+    synchronized (lsd._store) {
+      LSA old = lsd._store.get(rd.simulatedIPAddress);
+      LSA next = new LSA();
+      next.linkStateID = rd.simulatedIPAddress;
+      next.lsaSeqNumber = old.lsaSeqNumber + 1;
+
+      LinkDescription self = new LinkDescription();
+      self.linkID = rd.simulatedIPAddress;
+      self.portNum = -1;
+      self.tosMetrics = 0;
+      self.weight = 0;
+      next.links.add(self);
+
+      for (int i = 0; i < ports.length; i++) {
+        Link link = ports[i];
+        if (link == null || link.router2 == null ||
+                link.router2.status != RouterStatus.TWO_WAY) continue;
+        LinkDescription description = new LinkDescription();
+        description.linkID = link.router2.simulatedIPAddress;
+        description.portNum = i;
+        description.tosMetrics = 0;
+        description.weight = portWeights[i];
+        next.links.add(description);
+      }
+      lsd._store.put(next.linkStateID, next);
+      return next;
+    }
+  }
+
+
 
   private synchronized void broadcastLSAUpdate(Vector<LSA> lsaArray,String fromSimulatedIP) {
     //Create packet with sospfType = 1
@@ -324,21 +383,37 @@ public class Router {
       }
     }
   }
+  /** Synchronize the current LSDB with one established neighbor. */
+  private void sendLSDBToNeighbor(RouterDescription neighbor, Vector<LSA> snapshot) {
+    try (Socket socket = new Socket(neighbor.processIPAddress, neighbor.processPortNumber);
+         ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+      SOSPFPacket packet = buildPacket(neighbor.simulatedIPAddress, (short) 1);
+      packet.lsaArray = snapshot;
+      out.writeObject(packet);
+      out.flush();
+    } catch (Exception e) {
+      System.err.println("Failed to synchronize LSDB with " + neighbor.simulatedIPAddress);
+      e.printStackTrace();
+    }
+  }
+
   private void handleLSAUpdate(SOSPFPacket packet) {
+    if (packet.lsaArray == null) return;
     System.out.println("Received LSA update from " + packet.srcIP + ";");
-    Vector<LSA> lsaArray = new Vector<>();
-    for (LSA incomingLSA : packet.lsaArray) {
-      System.out.println(incomingLSA);
-      String originatingIP = incomingLSA.linkStateID;
-
-      LSA existingLSA = this.lsd._store.get(originatingIP);
-
-      if (existingLSA == null || incomingLSA.lsaSeqNumber > existingLSA.lsaSeqNumber) {
-       this.lsd._store.put(originatingIP, incomingLSA);
-      lsaArray.add(incomingLSA);
+    Vector<LSA> newer = new Vector<>();
+    synchronized (lsd._store) {
+      for (LSA incoming : packet.lsaArray) {
+        if (incoming == null || incoming.linkStateID == null) continue;
+        // Never accept another router's version of our own advertisement.
+        if (rd.simulatedIPAddress.equals(incoming.linkStateID)) continue;
+        LSA current = lsd._store.get(incoming.linkStateID);
+        if (current == null || incoming.lsaSeqNumber > current.lsaSeqNumber) {
+          lsd._store.put(incoming.linkStateID, incoming);
+          newer.add(incoming);
+        }
+      }
     }
-      broadcastLSAUpdate(lsaArray, packet.srcIP);
-    }
+    if (!newer.isEmpty()) broadcastLSAUpdate(newer, packet.srcIP);
   }
 
   private void processStart() {
@@ -347,43 +422,47 @@ public class Router {
         if(link==null || link.router2==null){
           continue;
         }
-      RouterDescription r2 = link.router2;
+        RouterDescription r2 = link.router2;
 
 
-      Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
-      ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-      out.flush();
-      ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
-      if(r2.status!=RouterStatus.TWO_WAY) {
-      SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
+        boolean needsHandshake = r2.status != RouterStatus.TWO_WAY;
+        Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
+        ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+        out.flush();
+        ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+        if(needsHandshake) {
+          SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
 
 
 
-      out.writeObject(hello);
-      out.flush();
+          out.writeObject(hello);
+          out.flush();
 
-      SOSPFPacket response = (SOSPFPacket) in.readObject();
+          SOSPFPacket response = (SOSPFPacket) in.readObject();
 
-      if(response==null || response.sospfType!=0) {
-        System.out.println("Your Init request has been rejected;");
-        socket.close();
-        continue;
-      }
-        System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
-        r2.status = RouterStatus.TWO_WAY;
-        System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
-        out.writeObject(hello);
-        out.flush();}
+          if(response==null || response.sospfType!=0) {
+            System.out.println("Your Init request has been rejected;");
+            socket.close();
+            continue;
+          }
+          System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
+          r2.status = RouterStatus.TWO_WAY;
+          System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
+          out.writeObject(hello);
+          out.flush();}
 
         SOSPFPacket update = buildPacket(r2.simulatedIPAddress,(short) 1);
-        update.lsaArray = new Vector<>(this.lsd._store.values());
+        synchronized (lsd._store) {
+          update.lsaArray = new Vector<>(this.lsd._store.values());
+        }
         out.writeObject(update);
         out.flush();
         socket.close();
 
-    }
+      }
       catch(Exception e){
         System.out.println("Failed to process the request from the remote router.");
+        e.printStackTrace();
 
       }}
 
@@ -407,11 +486,11 @@ public class Router {
    */
   private void processNeighbors() {
     for (int i = 0; i < ports.length; i++){
-        if (ports[i] != null &&
-            ports[i].router2.status == RouterStatus.TWO_WAY) {
+      if (ports[i] != null &&
+              ports[i].router2.status == RouterStatus.TWO_WAY) {
 
-            System.out.println(ports[i].router2.simulatedIPAddress);
-        }
+        System.out.println(ports[i].router2.simulatedIPAddress);
+      }
     }
   }
 
@@ -426,20 +505,33 @@ public class Router {
    * update the weight of an attached link
    */
   private void updateWeight(String processIP, int processPort,
-                             String simulatedIP, short weight){
+                            String simulatedIP, short weight){
 
   }
 
   /**
    * update the weight of a specific port.
-   * This change should trigger synchronization of the Link State Database by sending 
+   * This change should trigger synchronization of the Link State Database by sending
    * a Link State Advertisement (LSA) update to all neighboring routers in the topology.
    *
    * @param portNumber the port number (0-3) to update
    * @param newWeight the new weight/cost for the link attached to this port
    */
   private void processUpdate(short portNumber, short newWeight) {
-
+    /*
+    if (portNumber < 0 || portNumber >= ports.length || ports[portNumber] == null) {
+      System.out.println("Invalid or unattached port.");
+      return;
+    }
+    if (newWeight < 0) {
+      System.out.println("Weight must be nonnegative.");
+      return;
+    }
+    if (portWeights[portNumber] == newWeight) return;
+    portWeights[portNumber] = newWeight;
+    if (ports[portNumber].router2.status == RouterStatus.TWO_WAY) {
+      advertiseLocalTopology();
+    }*/
   }
 
   /**
@@ -449,7 +541,7 @@ public class Router {
    * When you run send, the window of the router where you run the command should print:
    * "Sending message to <Destination IP>"
    * <p/>
-   * For each intermediate router on the shortest path (excluding the source and destination), 
+   * For each intermediate router on the shortest path (excluding the source and destination),
    * the router window should print:
    * "Forwarding packet from <Source IP> to <Destination IP>"
    * <p/>
@@ -483,6 +575,14 @@ public class Router {
 
   }
 
+  private void processStats() {
+    for(short type : stats.keySet()) {
+      System.out.println(encoding.get(type) + "sent:" + stats.get(type)[1]);
+      System.out.println(encoding.get(type) + "received:" + stats.get(type)[0]);
+    }
+
+  }
+
   public void terminal() {
     System.out.println("========================================");
     System.out.println();
@@ -506,10 +606,10 @@ public class Router {
           continue;
         }
         if(startPending) {
-            while (startPending) {
-                Thread.sleep(10);
-            }
-            continue;
+          while (startPending) {
+            Thread.sleep(10);
+          }
+          continue;
         }
 
         if (command.startsWith("detect ")) {
@@ -549,6 +649,8 @@ public class Router {
           } else {
             System.out.println("Usage: update [port_number] [new_weight]");
           }
+        }else if (command.equals("stats")) {
+          processStats();
         } else {
           //invalid command
           break;

@@ -86,7 +86,13 @@ public class Router {
    */
 
   private void processDetect(String destinationIP) {
+    String path = lsd.getShortestPath(destinationIP);
 
+    if (path != null) {
+      System.out.println("Path found: " + path);
+    } else {
+      System.out.println("Path not found");
+    }
   }
 
   /**
@@ -117,7 +123,6 @@ public class Router {
           break;
         }
       }
-      refreshLocalLSA();
 
       if (freePortIdx == -1) {
         System.out.println("No available ports.");
@@ -229,7 +234,7 @@ public class Router {
             }
             System.out.println("received HELLO from " + request.srcIP + ";");
             link.router2.status = RouterStatus.TWO_WAY;
-            refreshLocalLSA();
+            LSA localUpdate = refreshLocalLSA();
             System.out.println(
                     "set " + link.router2.simulatedIPAddress + " STATE to TWO_WAY;"
             );
@@ -241,6 +246,9 @@ public class Router {
                 snapshot = new Vector<>(lsd._store.values());
               }
               sendLSDBToNeighbor(link.router2, snapshot);
+              Vector<LSA> advertisements = new Vector<>();
+              advertisements.add(localUpdate);
+              broadcastLSAUpdate(advertisements, null);
             }
             else{
               startPending =false;
@@ -426,6 +434,7 @@ public class Router {
 
 
         boolean needsHandshake = r2.status != RouterStatus.TWO_WAY;
+        LSA localUpdate = null;
         Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
         ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
         out.flush();
@@ -447,6 +456,7 @@ public class Router {
           }
           System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
           r2.status = RouterStatus.TWO_WAY;
+          localUpdate = refreshLocalLSA();
           System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
           out.writeObject(hello);
           out.flush();}
@@ -458,6 +468,11 @@ public class Router {
         out.writeObject(update);
         out.flush();
         socket.close();
+        if (localUpdate != null) {
+          Vector<LSA> advertisements = new Vector<>();
+          advertisements.add(localUpdate);
+          broadcastLSAUpdate(advertisements, null);
+        }
 
       }
       catch(Exception e){

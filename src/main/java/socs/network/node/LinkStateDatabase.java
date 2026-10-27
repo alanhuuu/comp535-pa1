@@ -3,7 +3,10 @@ package socs.network.node;
 import socs.network.message.LSA;
 import socs.network.message.LinkDescription;
 
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.PriorityQueue;
 
 public class LinkStateDatabase {
 
@@ -30,8 +33,89 @@ public class LinkStateDatabase {
    * @return the shortest path as a string, or null if no path exists
    */
   String getShortestPath(String destinationIP) {
-    //TODO: fill the implementation here
-    return null;
+    HashMap<String, Integer> dist = new HashMap<>();
+    HashMap<String, String> prev = new HashMap<>();
+    PriorityQueue<Map.Entry<String, Integer>> pq = new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
+
+    String sourceIP = rd.simulatedIPAddress;
+
+    dist.put(sourceIP, 0);
+
+    for (String routerID : _store.keySet()) {
+      if (!routerID.equals(sourceIP)) {
+        dist.put(routerID, Integer.MAX_VALUE);
+      }
+      prev.put(routerID, null);
+    }
+
+    pq.offer(Map.entry(sourceIP, 0));
+
+    while (!pq.isEmpty()){
+      Map.Entry<String, Integer> current = pq.poll();
+
+      String currentRouterID = current.getKey();
+      int distance = current.getValue();
+
+      if (distance > dist.get(currentRouterID)) {
+        continue;
+      }
+
+      // If we have reached the destination, we can break out of the loop. We don't need to continue processing other nodes.
+      if (currentRouterID.equals(destinationIP)) {
+        break;
+      }
+
+      // Preventing NullPointerException by checking if the current router ID exists in the _store before accessing its links
+      if (_store.get(currentRouterID) == null) {
+        continue;
+      }
+
+      for (LinkDescription link : _store.get(currentRouterID).links) {
+        String neighborID = link.linkID;
+        int weight = link.weight;
+        
+        int newDist = distance + weight;
+
+        if (newDist < dist.getOrDefault(neighborID, Integer.MAX_VALUE)) {
+          dist.put(neighborID, newDist);
+          prev.put(neighborID, currentRouterID);
+          pq.offer(Map.entry(neighborID, newDist));
+        }
+      }
+    }
+
+    if (dist.getOrDefault(destinationIP, Integer.MAX_VALUE) == Integer.MAX_VALUE) {
+      return null;
+    }
+
+    String curr = destinationIP;
+    String stringPath = curr;
+
+    while (!curr.equals(sourceIP)) {
+      String prevRouter = prev.get(curr);
+
+      if (prevRouter == null) {
+        return null;
+      }
+
+      String targetRouter = curr;
+
+      Integer currWeight = _store.get(prevRouter).links.stream()
+              .filter(link -> link.linkID.equals(targetRouter))
+              .findFirst()
+              .map(link -> link.weight)
+              .orElse(null);
+      
+      if (currWeight == null) {
+        return null;
+      }
+
+      stringPath = String.format("%s -> (%d) %s", prevRouter, currWeight, stringPath);
+      curr = prevRouter;
+      
+    }
+      
+    return stringPath;
   }
 
   //initialize the linkstate database by adding an entry about the router itself

@@ -35,8 +35,6 @@ public class Router {
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
-  // Store the weight independently of Link (whose API is not supplied).
-  private final short[] portWeights = new short[4];
   private ServerSocket serverSocket;
 
   public Router(Configuration config) {
@@ -152,7 +150,7 @@ public class Router {
       remoteRouter.simulatedIPAddress = simulatedIP;
 
       ports[freePortIdx] = new Link(rd, remoteRouter);
-      portWeights[freePortIdx] = weight;
+      ports[freePortIdx].weight = weight;
 
       System.out.println("Your attach request has been accepted;");
 
@@ -299,7 +297,7 @@ public class Router {
         remoteRouter.simulatedIPAddress = request.srcIP;
 
         ports[freePortIdx] = new Link(rd, remoteRouter);
-        portWeights[freePortIdx] = request.weight;
+        ports[freePortIdx].weight = request.weight;
 
         out.writeBoolean(true);
         out.flush();
@@ -351,7 +349,7 @@ public class Router {
         description.linkID = link.router2.simulatedIPAddress;
         description.portNum = i;
         description.tosMetrics = 0;
-        description.weight = portWeights[i];
+        description.weight = link.weight;
         next.links.add(description);
       }
       lsd._store.put(next.linkStateID, next);
@@ -410,19 +408,44 @@ public class Router {
     if (packet.lsaArray == null) return;
     System.out.println("Received LSA update from " + packet.srcIP + ";");
     Vector<LSA> newer = new Vector<>();
+    LSA localUpdate = null;
     synchronized (lsd._store) {
+      boolean localWeightChanged = false;
       for (LSA incoming : packet.lsaArray) {
         if (incoming == null || incoming.linkStateID == null) continue;
+
         // Never accept another router's version of our own advertisement.
         if (rd.simulatedIPAddress.equals(incoming.linkStateID)) continue;
+
         LSA current = lsd._store.get(incoming.linkStateID);
+
         if (current == null || incoming.lsaSeqNumber > current.lsaSeqNumber) {
           lsd._store.put(incoming.linkStateID, incoming);
           newer.add(incoming);
+
+          // Update the weights of the links to neighbors if they have changed
+          for (Link link : ports) {
+            if (link == null || link.router2 == null ||
+                !link.router2.simulatedIPAddress.equals(incoming.linkStateID)) continue;
+            for (LinkDescription description : incoming.links) {
+              if (rd.simulatedIPAddress.equals(description.linkID) &&
+                  description.weight >= 0 && description.weight <= Short.MAX_VALUE &&
+                  link.weight != description.weight) {
+                link.weight = (short) description.weight;
+                localWeightChanged = true;
+              }
+            }
+          }
         }
       }
+      if (localWeightChanged) localUpdate = refreshLocalLSA();
     }
     if (!newer.isEmpty()) broadcastLSAUpdate(newer, packet.srcIP);
+    if (localUpdate != null) {
+      Vector<LSA> advertisements = new Vector<>();
+      advertisements.add(localUpdate);
+      broadcastLSAUpdate(advertisements, null);
+    }
   }
 
   private void processStart() {
@@ -534,7 +557,6 @@ public class Router {
    * @param newWeight the new weight/cost for the link attached to this port
    */
   private void processUpdate(short portNumber, short newWeight) {
-    /*
     if (portNumber < 0 || portNumber >= ports.length || ports[portNumber] == null) {
       System.out.println("Invalid or unattached port.");
       return;
@@ -543,11 +565,13 @@ public class Router {
       System.out.println("Weight must be nonnegative.");
       return;
     }
-    if (portWeights[portNumber] == newWeight) return;
-    portWeights[portNumber] = newWeight;
-    if (ports[portNumber].router2.status == RouterStatus.TWO_WAY) {
-      advertiseLocalTopology();
-    }*/
+    if (ports[portNumber].weight == newWeight) return;
+
+    ports[portNumber].weight = newWeight;
+    LSA localUpdate = refreshLocalLSA();
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(localUpdate);
+    broadcastLSAUpdate(advertisements, null);
   }
 
   /**

@@ -4,6 +4,7 @@ public class Link {
 
   RouterDescription router1;
   RouterDescription router2;
+  short weight;
 
   public Link(RouterDescription r1, RouterDescription r2) {
     router1 = r1;

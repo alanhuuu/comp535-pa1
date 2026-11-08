@@ -95,7 +95,17 @@ public class Router {
    * @param portNumber the port number which the link attaches at
    */
   private void processDisconnect(short portNumber) {
+    if (portNumber < 0 || portNumber >= ports.length || ports[portNumber] == null) {
+      System.out.println("Invalid or unattached port.");
+      return;
+    }
 
+    ports[portNumber] = null;
+    lsd._store.get(rd.simulatedIPAddress).links.removeIf(link -> link.portNum == portNumber);
+    LSA localUpdate = refreshLocalLSA();
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(localUpdate);
+    broadcastLSAUpdate(advertisements, null);
   }
 
   /**

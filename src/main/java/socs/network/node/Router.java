@@ -35,8 +35,6 @@ public class Router {
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
-  // Store the weight independently of Link (whose API is not supplied).
-  private final short[] portWeights = new short[4];
   private ServerSocket serverSocket;
 
   public Router(Configuration config) {
@@ -152,7 +150,7 @@ public class Router {
       remoteRouter.simulatedIPAddress = simulatedIP;
 
       ports[freePortIdx] = new Link(rd, remoteRouter);
-      portWeights[freePortIdx] = weight;
+      ports[freePortIdx].weight = weight;
 
       System.out.println("Your attach request has been accepted;");
 
@@ -299,7 +297,7 @@ public class Router {
         remoteRouter.simulatedIPAddress = request.srcIP;
 
         ports[freePortIdx] = new Link(rd, remoteRouter);
-        portWeights[freePortIdx] = request.weight;
+        ports[freePortIdx].weight = request.weight;
 
         out.writeBoolean(true);
         out.flush();
@@ -351,7 +349,9 @@ public class Router {
         description.linkID = link.router2.simulatedIPAddress;
         description.portNum = i;
         description.tosMetrics = 0;
-        description.weight = portWeights[i];
+        description.weight = link.weight;
+        description.weightVersion = link.weightVersion;
+        description.weightOrigin = link.weightOrigin;
         next.links.add(description);
       }
       lsd._store.put(next.linkStateID, next);
@@ -410,19 +410,48 @@ public class Router {
     if (packet.lsaArray == null) return;
     System.out.println("Received LSA update from " + packet.srcIP + ";");
     Vector<LSA> newer = new Vector<>();
+    LSA localUpdate = null;
     synchronized (lsd._store) {
+      boolean localLinkChanged = false;
       for (LSA incoming : packet.lsaArray) {
         if (incoming == null || incoming.linkStateID == null) continue;
+
         // Never accept another router's version of our own advertisement.
         if (rd.simulatedIPAddress.equals(incoming.linkStateID)) continue;
+
         LSA current = lsd._store.get(incoming.linkStateID);
+
         if (current == null || incoming.lsaSeqNumber > current.lsaSeqNumber) {
           lsd._store.put(incoming.linkStateID, incoming);
           newer.add(incoming);
+
+          // Higher change versions win; router ID breaks ties.
+          for (Link link : ports) {
+            if (link == null || link.router2 == null ||
+                !link.router2.simulatedIPAddress.equals(incoming.linkStateID)) continue;
+            for (LinkDescription description : incoming.links) {
+              if (rd.simulatedIPAddress.equals(description.linkID) &&
+                  description.weight >= 0 && description.weight <= Short.MAX_VALUE &&
+                  (description.weightVersion > link.weightVersion ||
+                   (description.weightVersion == link.weightVersion &&
+                    description.weightOrigin.compareTo(link.weightOrigin) > 0))) {
+                link.weight = (short) description.weight;
+                link.weightVersion = description.weightVersion;
+                link.weightOrigin = description.weightOrigin;
+                localLinkChanged = true;
+              }
+            }
+          }
         }
       }
+      if (localLinkChanged) localUpdate = refreshLocalLSA();
     }
     if (!newer.isEmpty()) broadcastLSAUpdate(newer, packet.srcIP);
+    if (localUpdate != null) {
+      Vector<LSA> advertisements = new Vector<>();
+      advertisements.add(localUpdate);
+      broadcastLSAUpdate(advertisements, null);
+    }
   }
 
   private void processStart() {
@@ -534,7 +563,6 @@ public class Router {
    * @param newWeight the new weight/cost for the link attached to this port
    */
   private void processUpdate(short portNumber, short newWeight) {
-    /*
     if (portNumber < 0 || portNumber >= ports.length || ports[portNumber] == null) {
       System.out.println("Invalid or unattached port.");
       return;
@@ -543,11 +571,18 @@ public class Router {
       System.out.println("Weight must be nonnegative.");
       return;
     }
-    if (portWeights[portNumber] == newWeight) return;
-    portWeights[portNumber] = newWeight;
-    if (ports[portNumber].router2.status == RouterStatus.TWO_WAY) {
-      advertiseLocalTopology();
-    }*/
+    LSA localUpdate;
+    synchronized (lsd._store) {
+      Link link = ports[portNumber];
+      if (link.weight == newWeight) return;
+      link.weight = newWeight;
+      link.weightVersion++;
+      link.weightOrigin = rd.simulatedIPAddress;
+      localUpdate = refreshLocalLSA();
+    }
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(localUpdate);
+    broadcastLSAUpdate(advertisements, null);
   }
 
   /**

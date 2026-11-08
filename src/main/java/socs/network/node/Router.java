@@ -350,6 +350,8 @@ public class Router {
         description.portNum = i;
         description.tosMetrics = 0;
         description.weight = link.weight;
+        description.weightVersion = link.weightVersion;
+        description.weightOrigin = link.weightOrigin;
         next.links.add(description);
       }
       lsd._store.put(next.linkStateID, next);
@@ -410,7 +412,7 @@ public class Router {
     Vector<LSA> newer = new Vector<>();
     LSA localUpdate = null;
     synchronized (lsd._store) {
-      boolean localWeightChanged = false;
+      boolean localLinkChanged = false;
       for (LSA incoming : packet.lsaArray) {
         if (incoming == null || incoming.linkStateID == null) continue;
 
@@ -423,22 +425,26 @@ public class Router {
           lsd._store.put(incoming.linkStateID, incoming);
           newer.add(incoming);
 
-          // Update the weights of the links to neighbors if they have changed
+          // Higher change versions win; router ID breaks ties.
           for (Link link : ports) {
             if (link == null || link.router2 == null ||
                 !link.router2.simulatedIPAddress.equals(incoming.linkStateID)) continue;
             for (LinkDescription description : incoming.links) {
               if (rd.simulatedIPAddress.equals(description.linkID) &&
                   description.weight >= 0 && description.weight <= Short.MAX_VALUE &&
-                  link.weight != description.weight) {
+                  (description.weightVersion > link.weightVersion ||
+                   (description.weightVersion == link.weightVersion &&
+                    description.weightOrigin.compareTo(link.weightOrigin) > 0))) {
                 link.weight = (short) description.weight;
-                localWeightChanged = true;
+                link.weightVersion = description.weightVersion;
+                link.weightOrigin = description.weightOrigin;
+                localLinkChanged = true;
               }
             }
           }
         }
       }
-      if (localWeightChanged) localUpdate = refreshLocalLSA();
+      if (localLinkChanged) localUpdate = refreshLocalLSA();
     }
     if (!newer.isEmpty()) broadcastLSAUpdate(newer, packet.srcIP);
     if (localUpdate != null) {
@@ -565,10 +571,15 @@ public class Router {
       System.out.println("Weight must be nonnegative.");
       return;
     }
-    if (ports[portNumber].weight == newWeight) return;
-
-    ports[portNumber].weight = newWeight;
-    LSA localUpdate = refreshLocalLSA();
+    LSA localUpdate;
+    synchronized (lsd._store) {
+      Link link = ports[portNumber];
+      if (link.weight == newWeight) return;
+      link.weight = newWeight;
+      link.weightVersion++;
+      link.weightOrigin = rd.simulatedIPAddress;
+      localUpdate = refreshLocalLSA();
+    }
     Vector<LSA> advertisements = new Vector<>();
     advertisements.add(localUpdate);
     broadcastLSAUpdate(advertisements, null);

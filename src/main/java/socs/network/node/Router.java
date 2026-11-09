@@ -17,6 +17,8 @@ import java.net.Socket;
 import java.util.HashMap;
 import java.util.Vector;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 
 public class Router {
@@ -34,6 +36,8 @@ public class Router {
   private HashMap<Short,Integer[]> stats;
   private HashMap<Short,String> encoding;
   private HashMap<Link, Integer> consecutiveMissedHeartbeats;
+
+  private static final int THREAD_POOL_SIZE = 5;
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
@@ -195,18 +199,23 @@ public class Router {
   }
 
   private void listener(){
-    while(!serverSocket.isClosed()){
-      try{
-        Socket socket = serverSocket.accept();
+    ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
-        requestHandler(socket);
-        System.out.println("Back here");
-      }
-      catch (Exception e){
-        if (serverSocket.isClosed()) return;
-        System.out.println(e.toString());
-        System.out.println("Failed to accept the connection from the remote router.");
-      }
+    try {
+        while (!serverSocket.isClosed()) {
+          try {
+            Socket socket = serverSocket.accept();
+            executor.submit(() -> requestHandler(socket));
+          }
+          catch (Exception e) {
+            if (!serverSocket.isClosed()) {
+                System.out.println("Listener encountered an error: " + e.getMessage());
+            }
+          } 
+        }
+    }
+    finally {
+      executor.shutdown();
     }
   }
 

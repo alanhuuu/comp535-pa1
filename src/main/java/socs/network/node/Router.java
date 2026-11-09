@@ -262,7 +262,6 @@ public class Router {
 
             acknowledged = in.readBoolean();
           } catch (Exception e) {
-            System.out.println("Heartbeat failed for " + link.router2.simulatedIPAddress);
           }
 
           if (!acknowledged) {
@@ -315,7 +314,7 @@ public class Router {
 
       SOSPFPacket request = (SOSPFPacket) in.readObject();
       this.stats.get(request.sospfType)[0]+=1;
-      System.out.println();
+      //System.out.println();
 
       boolean isNeighbor = false;
       if (request.sospfType == 3) {
@@ -443,12 +442,18 @@ public class Router {
       System.out.println();
       System.out.println("Do you accept this request? (Y/N)");
 
+      String response = null;
       attachRequestPending = true;
-      while (attachResponse == null) {
-        Thread.sleep(10);
+      try {
+        while (attachResponse == null) {
+          Thread.sleep(10);
+        }
+        response = attachResponse;
+        attachResponse = null;
       }
-      String response = attachResponse;
-      attachResponse = null;
+      finally {
+        attachRequestPending = false;
+      }
 
       if (response.equalsIgnoreCase("Y")) {
         RouterDescription remoteRouter = new RouterDescription();
@@ -476,9 +481,6 @@ public class Router {
     catch (Exception e){
       System.out.println(e.toString());
       System.out.println("Failed to process the request from the remote router.");
-    }
-    finally {
-      attachRequestPending = false;
     }
   }
 
@@ -721,6 +723,15 @@ public class Router {
           System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
           out.writeObject(hello);
           out.flush();
+
+          SOSPFPacket update = buildPacket(r2.simulatedIPAddress,(short) 1);
+          synchronized (lsd._store) {
+            update.lsaArray = new Vector<>(this.lsd._store.values());
+          }
+          out.writeObject(update);
+          out.flush();
+          socket.close();
+
           localUpdate = refreshLocalLSA();
           Vector<LSA> advertisements = new Vector<>();
           advertisements.add(localUpdate);
@@ -728,6 +739,8 @@ public class Router {
         }
 
       } catch (Exception e) {
+        System.out.println("Failed to process the request from the remote router.");
+        e.printStackTrace();
       }
     }
   }

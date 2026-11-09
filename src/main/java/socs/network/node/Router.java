@@ -273,20 +273,20 @@ public class Router {
           }
 
           if (consecutiveMissedHeartbeats.getOrDefault(link, 0) >= 3) {
-          System.out.println("Neighbor " + link.router2.simulatedIPAddress + " is considered unreachable.");
+            System.out.println("Neighbor " + link.router2.simulatedIPAddress + " is considered unreachable.");
 
-          ports[i] = null;
+            ports[i] = null;
 
-          synchronized (consecutiveMissedHeartbeats) {
-            consecutiveMissedHeartbeats.remove(link);
-          }
+            synchronized (consecutiveMissedHeartbeats) {
+              consecutiveMissedHeartbeats.remove(link);
+            }
 
-          LSA update = refreshLocalLSA();
+            LSA update = refreshLocalLSA();
 
-          Vector<LSA> advertisements = new Vector<>();
-          advertisements.add(update);
+            Vector<LSA> advertisements = new Vector<>();
+            advertisements.add(update);
 
-          broadcastLSAUpdate(advertisements, null);
+            broadcastLSAUpdate(advertisements, null);
           }
         }
 

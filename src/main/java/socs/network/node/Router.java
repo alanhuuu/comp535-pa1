@@ -28,10 +28,12 @@ public class Router {
   // Create a shared BufferedReader for reading user input from the console
   private final BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
   private volatile boolean attachRequestPending = false;
+  private volatile boolean hasStarted=false;
   private volatile boolean startPending = false;
   private volatile String attachResponse = null;
   private HashMap<Short,Integer[]> stats;
   private HashMap<Short,String> encoding;
+  private HashMap<Link, Integer> heartbeats;
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
@@ -48,18 +50,22 @@ public class Router {
       lsd = new LinkStateDatabase(rd);
       stats = new HashMap<>();
       encoding = new HashMap<>();
-      for (short type = 0; type < 4; type++) {
+      heartbeats = new HashMap<>();
+      for (short type = 0; type < 5; type++) {
         stats.put(type, new Integer[]{0, 0});
       }
-
-      // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
-      Thread listenerThread  = new Thread(this::listener);
-      listenerThread.start();
-
       encoding.put((short) 0,"HELLO");
       encoding.put((short) 1,"LSAUPDATE");
       encoding.put((short) 2,"APP_MESSAGE");
-      encoding.put((short) 3,"DISCONNECT");
+      encoding.put((short) 3,"HEARTBEAT");
+      encoding.put((short) 4,"DISCONNECT");
+      // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
+      Thread listenerThread  = new Thread(this::listener);
+      Thread heartbeatThread = new Thread(this::heartbeat);
+      listenerThread.start();
+      heartbeatThread.start();
+
+
     } catch (Exception e) {
       throw new RuntimeException("Failed to intialize router", e);
     }
@@ -114,7 +120,7 @@ public class Router {
   private void sendDisconnectMessage(Link link){
     try (Socket socket = new Socket(link.router2.processIPAddress, link.router2.processPortNumber);
          ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
-      SOSPFPacket packet = buildPacket(link.router2.simulatedIPAddress, (short) 3);
+      SOSPFPacket packet = buildPacket(link.router2.simulatedIPAddress, (short) 4);
       out.writeObject(packet);
       out.flush();
     } catch (Exception e) {
@@ -204,6 +210,98 @@ public class Router {
     }
   }
 
+  private void heartbeat() {
+    while (!serverSocket.isClosed()) {
+      try {
+        for (int i = 0; i < ports.length; i++) {
+          Link link = ports[i];
+
+          if (link == null || link.router2 == null ||
+                  link.router2.status != RouterStatus.TWO_WAY) {
+            continue;
+          }
+
+          // Increment missed heartbeat counter
+          int missed;
+          synchronized (heartbeats) {
+            missed = heartbeats.merge(link, 1, Integer::sum);
+          }
+
+          try (Socket socket = new Socket()) {
+            socket.connect(
+                    new java.net.InetSocketAddress(
+                            link.router2.processIPAddress,
+                            link.router2.processPortNumber
+                    ), 2000
+            );
+
+            socket.setSoTimeout(2000);
+
+            ObjectOutputStream out =
+                    new ObjectOutputStream(socket.getOutputStream());
+            out.flush();
+
+            ObjectInputStream in =
+                    new ObjectInputStream(socket.getInputStream());
+
+            SOSPFPacket packet = new SOSPFPacket();
+            packet.sospfType = 3;
+            packet.srcIP = rd.simulatedIPAddress;
+            packet.dstIP = link.router2.simulatedIPAddress;
+            packet.srcProcessIP = rd.processIPAddress;
+            packet.srcProcessPort = rd.processPortNumber;
+
+            out.writeObject(packet);
+            out.flush();
+
+            boolean acknowledged = in.readBoolean();
+
+            if (acknowledged) {
+              synchronized (heartbeats) {
+                heartbeats.put(link, 0);
+              }
+            }
+
+          } catch (Exception e) {
+            System.out.println(
+                    "Heartbeat failed for " +
+                            link.router2.simulatedIPAddress
+            );
+
+            if (missed >= 3) {
+              System.out.println(
+                      "Neighbor " + link.router2.simulatedIPAddress +
+                              " is considered unreachable."
+              );
+
+              ports[i] = null;
+
+              synchronized (heartbeats) {
+                heartbeats.remove(link);
+              }
+
+              LSA update = refreshLocalLSA();
+
+              Vector<LSA> advertisements = new Vector<>();
+              advertisements.add(update);
+
+              broadcastLSAUpdate(advertisements, null);
+            }
+          }
+        }
+
+        Thread.sleep(3000);
+
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      } catch (Exception e) {
+        if (serverSocket.isClosed()) return;
+        System.out.println(e.toString());
+      }
+    }
+  }
+
   /**
    * process request from the remote router.
    * For example: when router2 tries to attach router1. Router1 can decide whether it will accept this request.
@@ -218,7 +316,11 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
       this.stats.get(request.sospfType)[0]+=1;
       System.out.println();
-
+      if (request.sospfType == 3) {
+        out.writeBoolean(true);
+        out.flush();
+        return;
+      }
       if (request.sospfType == 2) {
         handleApplicationMessage(request);
         return;
@@ -231,7 +333,7 @@ public class Router {
           return;
         }
 
-        if (request.sospfType == 3){
+        if (request.sospfType == 4){
           for (int i = 0; i < ports.length; i++){
             Link link = ports[i];
 
@@ -544,6 +646,7 @@ public class Router {
         out.writeObject(update);
         out.flush();
         socket.close();
+        this.hasStarted=true;
         if (localUpdate != null) {
           Vector<LSA> advertisements = new Vector<>();
           advertisements.add(localUpdate);
@@ -569,7 +672,52 @@ public class Router {
    */
   private void processConnect(String processIP, int processPort,
                               String simulatedIP, short weight) {
+    if (!hasStarted) {
+      System.out.println("Router has not started yet.");
+      return;
+    }
+    processAttach(processIP, processPort, simulatedIP, weight);
+    for (Link link : ports) {
+      try {
+        if (link == null || link.router2 == null || !link.router2.simulatedIPAddress.equals(simulatedIP)) {
+          continue;
+        }
+        RouterDescription r2 = link.router2;
 
+
+        boolean needsHandshake = r2.status != RouterStatus.TWO_WAY;
+        LSA localUpdate = null;
+        Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
+        ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+        out.flush();
+        ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+        if (needsHandshake) {
+          SOSPFPacket hello = buildPacket(r2.simulatedIPAddress, (short) 0);
+          out.writeObject(hello);
+          out.flush();
+
+          SOSPFPacket response = (SOSPFPacket) in.readObject();
+
+          if (response == null || response.sospfType != 0) {
+            System.out.println("Your Init request has been rejected;");
+            socket.close();
+            continue;
+          }
+          System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
+          r2.status = RouterStatus.TWO_WAY;
+          localUpdate = refreshLocalLSA();
+          System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
+          out.writeObject(hello);
+          out.flush();
+          localUpdate = refreshLocalLSA();
+          Vector<LSA> advertisements = new Vector<>();
+          advertisements.add(localUpdate);
+          broadcastLSAUpdate(advertisements, null);
+        }
+
+      } catch (Exception e) {
+      }
+    }
   }
 
   /**
@@ -589,6 +737,26 @@ public class Router {
    * disconnect with all neighbors and quit the program
    */
   private void processQuit() {
+    LSA next = new LSA();
+    synchronized (lsd._store) {
+      LSA old = lsd._store.get(rd.simulatedIPAddress);
+      next.linkStateID = rd.simulatedIPAddress;
+      next.lsaSeqNumber = old.lsaSeqNumber + 1;
+
+      LinkDescription self = new LinkDescription();
+      self.linkID = rd.simulatedIPAddress;
+      self.portNum = -1;
+      self.tosMetrics = 0;
+      self.weight = 0;
+      next.links.add(self);
+      lsd._store.put(next.linkStateID, next);
+    }
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(next);
+    broadcastLSAUpdate(advertisements, null);
+    for(Link link : ports) {
+      link =null;
+    };
 
   }
 

@@ -266,7 +266,7 @@ public class Router {
           }
 
           if (!acknowledged) {
-              System.out.println("Heartbeat not acknowledged by " + link.router2.simulatedIPAddress);
+              System.out.println("Heartbeat failed for " + link.router2.simulatedIPAddress);
               consecutiveMissedHeartbeats.put(link, consecutiveMissedHeartbeats.getOrDefault(link, 0) + 1);              
             }
           else {

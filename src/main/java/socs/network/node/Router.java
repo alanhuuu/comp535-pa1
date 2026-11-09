@@ -216,6 +216,7 @@ public class Router {
         for (int i = 0; i < ports.length; i++) {
           Link link = ports[i];
 
+          // Skip incomplete or non-TWO_WAY links
           if (link == null || link.router2 == null ||
                   link.router2.status != RouterStatus.TWO_WAY) {
             continue;
@@ -316,8 +317,21 @@ public class Router {
       SOSPFPacket request = (SOSPFPacket) in.readObject();
       this.stats.get(request.sospfType)[0]+=1;
       System.out.println();
+
+      boolean isNeighbor = false;
       if (request.sospfType == 3) {
-        out.writeBoolean(true);
+        for (Link link : ports) {
+          if (link != null &&
+             link.router2 != null && 
+             link.router2.status == RouterStatus.TWO_WAY && 
+             link.router2.simulatedIPAddress.equals(request.srcIP)) {
+              
+              
+            isNeighbor = true;
+            break;
+          }
+        }
+        out.writeBoolean(isNeighbor);
         out.flush();
         return;
       }

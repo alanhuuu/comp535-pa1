@@ -496,47 +496,52 @@ public class Router {
    */
   private void processConnect(String processIP, int processPort,
                               String simulatedIP, short weight) {
-      if(!hasStarted) {
-          System.out.println("Router has not started yet.");
-          return ;
+    if (!hasStarted) {
+      System.out.println("Router has not started yet.");
+      return;
+    }
+    processAttach(processIP, processPort, simulatedIP, weight);
+    for (Link link : ports) {
+      try {
+        if (link == null || link.router2 == null || !link.router2.simulatedIPAddress.equals(simulatedIP)) {
+          continue;
+        }
+        RouterDescription r2 = link.router2;
+
+
+        boolean needsHandshake = r2.status != RouterStatus.TWO_WAY;
+        LSA localUpdate = null;
+        Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
+        ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+        out.flush();
+        ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+        if (needsHandshake) {
+          SOSPFPacket hello = buildPacket(r2.simulatedIPAddress, (short) 0);
+          out.writeObject(hello);
+          out.flush();
+
+          SOSPFPacket response = (SOSPFPacket) in.readObject();
+
+          if (response == null || response.sospfType != 0) {
+            System.out.println("Your Init request has been rejected;");
+            socket.close();
+            continue;
+          }
+          System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
+          r2.status = RouterStatus.TWO_WAY;
+          localUpdate = refreshLocalLSA();
+          System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
+          out.writeObject(hello);
+          out.flush();
+          localUpdate = refreshLocalLSA();
+          Vector<LSA> advertisements = new Vector<>();
+          advertisements.add(localUpdate);
+          broadcastLSAUpdate(advertisements, null);
+        }
+
+      } catch (Exception e) {
       }
-      processAttach(processIP, processPort, simulatedIP, weight);
-      for(Link link : ports) {
-          try{
-              if(link==null || link.router2==null || !link.router2.simulatedIPAddress.equals(simulatedIP)){
-                  continue;
-              }
-              RouterDescription r2 = link.router2;
-
-
-              boolean needsHandshake = r2.status != RouterStatus.TWO_WAY;
-              LSA localUpdate = null;
-              Socket socket = new Socket(r2.processIPAddress, r2.processPortNumber);
-              ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-              out.flush();
-              ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
-              if(needsHandshake) {
-                  SOSPFPacket hello = buildPacket(r2.simulatedIPAddress,(short) 0);
-
-
-
-                  out.writeObject(hello);
-                  out.flush();
-
-                  SOSPFPacket response = (SOSPFPacket) in.readObject();
-
-                  if(response==null || response.sospfType!=0) {
-                      System.out.println("Your Init request has been rejected;");
-                      socket.close();
-                      continue;
-                  }
-                  System.out.println("received HELLO from " + r2.simulatedIPAddress + ";");
-                  r2.status = RouterStatus.TWO_WAY;
-                  localUpdate = refreshLocalLSA();
-                  System.out.println("Set " + r2.simulatedIPAddress + " STATE to TWO_WAY;");
-                  out.writeObject(hello);
-                  out.flush();}
-
+    }
   }
 
   /**
@@ -556,6 +561,26 @@ public class Router {
    * disconnect with all neighbors and quit the program
    */
   private void processQuit() {
+    LSA next = new LSA();
+    synchronized (lsd._store) {
+      LSA old = lsd._store.get(rd.simulatedIPAddress);
+      next.linkStateID = rd.simulatedIPAddress;
+      next.lsaSeqNumber = old.lsaSeqNumber + 1;
+
+      LinkDescription self = new LinkDescription();
+      self.linkID = rd.simulatedIPAddress;
+      self.portNum = -1;
+      self.tosMetrics = 0;
+      self.weight = 0;
+      next.links.add(self);
+      lsd._store.put(next.linkStateID, next);
+    }
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(next);
+    broadcastLSAUpdate(advertisements, null);
+    for(Link link : ports) {
+      link =null;
+    };
 
   }
 

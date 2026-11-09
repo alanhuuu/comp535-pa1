@@ -61,7 +61,8 @@ public class Router {
       // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
       Thread listenerThread  = new Thread(this::listener);
       Thread heartbeatThread = new Thread(this::heartbeat);
-      listenerThread.start();heartbeatThread.start();
+      listenerThread.start();
+      heartbeatThread.start();
 
 
     } catch (Exception e) {
@@ -148,97 +149,7 @@ public class Router {
         return;
       }
 
-      RouterDescription remoteRouter = new RouterDescription();private void heartbeat() {
-        while (!serverSocket.isClosed()) {
-          try {
-            for (int i = 0; i < ports.length; i++) {
-              Link link = ports[i];
-
-              if (link == null || link.router2 == null ||
-                      link.router2.status != RouterStatus.TWO_WAY) {
-                continue;
-              }
-
-              // Increment missed heartbeat counter
-              int missed;
-              synchronized (heartbeats) {
-                missed = heartbeats.merge(link, 1, Integer::sum);
-              }
-
-              try (Socket socket = new Socket()) {
-                socket.connect(
-                        new java.net.InetSocketAddress(
-                                link.router2.processIPAddress,
-                                link.router2.processPortNumber
-                        ), 2000
-                );
-
-                socket.setSoTimeout(2000);
-
-                ObjectOutputStream out =
-                        new ObjectOutputStream(socket.getOutputStream());
-                out.flush();
-
-                ObjectInputStream in =
-                        new ObjectInputStream(socket.getInputStream());
-
-                SOSPFPacket packet = new SOSPFPacket();
-                packet.sospfType = 3;
-                packet.srcIP = rd.simulatedIPAddress;
-                packet.dstIP = link.router2.simulatedIPAddress;
-                packet.srcProcessIP = rd.processIPAddress;
-                packet.srcProcessPort = rd.processPortNumber;
-
-                out.writeObject(packet);
-                out.flush();
-
-                boolean acknowledged = in.readBoolean();
-
-                if (acknowledged) {
-                  synchronized (heartbeats) {
-                    heartbeats.put(link, 0);
-                  }
-                }
-
-              } catch (Exception e) {
-                System.out.println(
-                        "Heartbeat failed for " +
-                                link.router2.simulatedIPAddress
-                );
-
-                if (missed >= 3) {
-                  System.out.println(
-                          "Neighbor " + link.router2.simulatedIPAddress +
-                                  " is considered unreachable."
-                  );
-
-                  ports[i] = null;
-
-                  synchronized (heartbeats) {
-                    heartbeats.remove(link);
-                  }
-
-                  LSA update = refreshLocalLSA();
-
-                  Vector<LSA> advertisements = new Vector<>();
-                  advertisements.add(update);
-
-                  broadcastLSAUpdate(advertisements, null);
-                }
-              }
-            }
-
-            Thread.sleep(3000);
-
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
-          } catch (Exception e) {
-            if (serverSocket.isClosed()) return;
-            System.out.println(e.toString());
-          }
-        }
-      }
+      RouterDescription remoteRouter = new RouterDescription();
 
       remoteRouter.processIPAddress = processIP;
       remoteRouter.processPortNumber = processPort;

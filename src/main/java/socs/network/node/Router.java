@@ -33,7 +33,7 @@ public class Router {
   private volatile String attachResponse = null;
   private HashMap<Short,Integer[]> stats;
   private HashMap<Short,String> encoding;
-  private HashMap<Link, Integer> heartbeats;
+  private HashMap<Link, Integer> consecutiveMissedHeartbeats;
 
   //assuming that all routers are with 4 ports
   Link[] ports = new Link[4];
@@ -50,7 +50,7 @@ public class Router {
       lsd = new LinkStateDatabase(rd);
       stats = new HashMap<>();
       encoding = new HashMap<>();
-      heartbeats = new HashMap<>();
+      consecutiveMissedHeartbeats = new HashMap<>();
       for (short type = 0; type < 5; type++) {
         stats.put(type, new Integer[]{0, 0});
       }
@@ -222,11 +222,7 @@ public class Router {
             continue;
           }
 
-          // Increment missed heartbeat counter
-          int missed;
-          synchronized (heartbeats) {
-            missed = heartbeats.merge(link, 1, Integer::sum);
-          }
+          boolean acknowledged = false;
 
           try (Socket socket = new Socket()) {
             socket.connect(
@@ -255,44 +251,38 @@ public class Router {
             out.writeObject(packet);
             out.flush();
 
-            boolean acknowledged = in.readBoolean();
-
-            if (acknowledged) {
-              synchronized (heartbeats) {
-                heartbeats.put(link, 0);
-              }
-            }
-
+            acknowledged = in.readBoolean();
           } catch (Exception e) {
-            System.out.println(
-                    "Heartbeat failed for " +
-                            link.router2.simulatedIPAddress
-            );
+            System.out.println("Heartbeat failed for " + link.router2.simulatedIPAddress);
+          }
 
-            if (missed >= 3) {
-              System.out.println(
-                      "Neighbor " + link.router2.simulatedIPAddress +
-                              " is considered unreachable."
-              );
-
-              ports[i] = null;
-
-              synchronized (heartbeats) {
-                heartbeats.remove(link);
-              }
-
-              LSA update = refreshLocalLSA();
-
-              Vector<LSA> advertisements = new Vector<>();
-              advertisements.add(update);
-
-              broadcastLSAUpdate(advertisements, null);
+          if (!acknowledged) {
+              System.out.println("Heartbeat not acknowledged by " + link.router2.simulatedIPAddress);
+              consecutiveMissedHeartbeats.put(link, consecutiveMissedHeartbeats.getOrDefault(link, 0) + 1);              
             }
+          else {
+              consecutiveMissedHeartbeats.put(link, 0);
+          }
+
+          if (consecutiveMissedHeartbeats.getOrDefault(link, 0) >= 3) {
+          System.out.println("Neighbor " + link.router2.simulatedIPAddress + " is considered unreachable.");
+
+          ports[i] = null;
+
+          synchronized (consecutiveMissedHeartbeats) {
+            consecutiveMissedHeartbeats.remove(link);
+          }
+
+          LSA update = refreshLocalLSA();
+
+          Vector<LSA> advertisements = new Vector<>();
+          advertisements.add(update);
+
+          broadcastLSAUpdate(advertisements, null);
           }
         }
 
         Thread.sleep(3000);
-
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         return;
@@ -325,8 +315,7 @@ public class Router {
              link.router2 != null && 
              link.router2.status == RouterStatus.TWO_WAY && 
              link.router2.simulatedIPAddress.equals(request.srcIP)) {
-              
-              
+            
             isNeighbor = true;
             break;
           }

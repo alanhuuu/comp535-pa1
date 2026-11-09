@@ -51,13 +51,14 @@ public class Router {
       stats = new HashMap<>();
       encoding = new HashMap<>();
       heartbeats = new HashMap<>();
-      for (short type = 0; type < 4; type++) {
+      for (short type = 0; type < 5; type++) {
         stats.put(type, new Integer[]{0, 0});
       }
       encoding.put((short) 0,"HELLO");
       encoding.put((short) 1,"LSAUPDATE");
       encoding.put((short) 2,"APP_MESSAGE");
-      encoding.put((short)3,"HEARTBEAT");
+      encoding.put((short) 3,"HEARTBEAT");
+      encoding.put((short) 4,"DISCONNECT");
       // The "serverSocket.accept()" method is a blocking call, so we need to run it in a separate thread to avoid blocking the main thread
       Thread listenerThread  = new Thread(this::listener);
       Thread heartbeatThread = new Thread(this::heartbeat);
@@ -101,7 +102,30 @@ public class Router {
    * @param portNumber the port number which the link attaches at
    */
   private void processDisconnect(short portNumber) {
+    if (portNumber < 0 || portNumber >= ports.length || ports[portNumber] == null) {
+      System.out.println("Invalid or unattached port.");
+      return;
+    }
 
+    sendDisconnectMessage(ports[portNumber]);
+    ports[portNumber] = null;
+
+    
+    LSA localUpdate = refreshLocalLSA();
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(localUpdate);
+    broadcastLSAUpdate(advertisements, null);
+  }
+
+  private void sendDisconnectMessage(Link link){
+    try (Socket socket = new Socket(link.router2.processIPAddress, link.router2.processPortNumber);
+         ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+      SOSPFPacket packet = buildPacket(link.router2.simulatedIPAddress, (short) 4);
+      out.writeObject(packet);
+      out.flush();
+    } catch (Exception e) {
+      System.err.println("Failed to send disconnect message to " + link.router2.simulatedIPAddress);
+    }
   }
 
   /**
@@ -308,6 +332,28 @@ public class Router {
           socket.close();
           return;
         }
+
+        if (request.sospfType == 4){
+          for (int i = 0; i < ports.length; i++){
+            Link link = ports[i];
+
+            if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
+              System.out.println("received disconnect from " + request.srcIP);
+
+              ports[i] = null;
+
+              LSA localUpdate = refreshLocalLSA();
+              Vector<LSA> advertisements = new Vector<>();
+              advertisements.add(localUpdate);
+              broadcastLSAUpdate(advertisements, null);
+              break;
+            }
+          }
+        }
+        else{
+          System.out.println("Unknown request type received from " + request.srcIP + ";");
+        }
+
         socket.close();
         return;
       }

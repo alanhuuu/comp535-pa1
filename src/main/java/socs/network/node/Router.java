@@ -48,7 +48,7 @@ public class Router {
       lsd = new LinkStateDatabase(rd);
       stats = new HashMap<>();
       encoding = new HashMap<>();
-      for (short type = 0; type < 3; type++) {
+      for (short type = 0; type < 4; type++) {
         stats.put(type, new Integer[]{0, 0});
       }
 
@@ -59,6 +59,7 @@ public class Router {
       encoding.put((short) 0,"HELLO");
       encoding.put((short) 1,"LSAUPDATE");
       encoding.put((short) 2,"APP_MESSAGE");
+      encoding.put((short) 3,"DISCONNECT");
     } catch (Exception e) {
       throw new RuntimeException("Failed to intialize router", e);
     }
@@ -100,12 +101,28 @@ public class Router {
       return;
     }
 
+    sendDisconnectMessage(ports[portNumber]);
     ports[portNumber] = null;
-    lsd._store.get(rd.simulatedIPAddress).links.removeIf(link -> link.portNum == portNumber);
+
+    synchronized (lsd._store) {
+      lsd._store.get(rd.simulatedIPAddress).links.removeIf(link -> link.portNum == portNumber);
+    }
+    
     LSA localUpdate = refreshLocalLSA();
     Vector<LSA> advertisements = new Vector<>();
     advertisements.add(localUpdate);
     broadcastLSAUpdate(advertisements, null);
+  }
+
+  private void sendDisconnectMessage(Link link){
+    try (Socket socket = new Socket(link.router2.processIPAddress, link.router2.processPortNumber);
+         ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream())) {
+      SOSPFPacket packet = buildPacket(link.router2.simulatedIPAddress, (short) 3);
+      out.writeObject(packet);
+      out.flush();
+    } catch (Exception e) {
+      System.err.println("Failed to send disconnect message to " + link.router2.simulatedIPAddress);
+    }
   }
 
   /**
@@ -216,6 +233,33 @@ public class Router {
           socket.close();
           return;
         }
+
+        if (request.sospfType == 3){
+          for(Link link : ports){
+            if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
+              System.out.println("received disconnect from " + request.srcIP);
+
+              int portNumToRemove = lsd._store.get(rd.simulatedIPAddress).links.stream()
+                      .filter(linkDesc -> linkDesc.linkID.equals(request.srcIP))
+                      .mapToInt(linkDesc -> linkDesc.portNum)
+                      .findFirst()
+                      .orElse(-1);
+              ports[portNumToRemove] = null;
+
+              synchronized (lsd._store) {
+                lsd._store.get(rd.simulatedIPAddress).links.removeIf(linkDesc -> linkDesc.linkID.equals(request.srcIP));
+              }
+              LSA localUpdate = refreshLocalLSA();
+              Vector<LSA> advertisements = new Vector<>();
+              advertisements.add(localUpdate);
+              broadcastLSAUpdate(advertisements, null);
+            }
+          }
+        }
+        else{
+          System.out.println("Unknown request type received from " + request.srcIP + ";");
+        }
+
         socket.close();
         return;
       }

@@ -104,9 +104,6 @@ public class Router {
     sendDisconnectMessage(ports[portNumber]);
     ports[portNumber] = null;
 
-    synchronized (lsd._store) {
-      lsd._store.get(rd.simulatedIPAddress).links.removeIf(link -> link.portNum == portNumber);
-    }
     
     LSA localUpdate = refreshLocalLSA();
     Vector<LSA> advertisements = new Vector<>();
@@ -235,24 +232,19 @@ public class Router {
         }
 
         if (request.sospfType == 3){
-          for(Link link : ports){
+          for (int i = 0; i < ports.length; i++){
+            Link link = ports[i];
+
             if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
               System.out.println("received disconnect from " + request.srcIP);
 
-              int portNumToRemove = lsd._store.get(rd.simulatedIPAddress).links.stream()
-                      .filter(linkDesc -> linkDesc.linkID.equals(request.srcIP))
-                      .mapToInt(linkDesc -> linkDesc.portNum)
-                      .findFirst()
-                      .orElse(-1);
-              ports[portNumToRemove] = null;
+              ports[i] = null;
 
-              synchronized (lsd._store) {
-                lsd._store.get(rd.simulatedIPAddress).links.removeIf(linkDesc -> linkDesc.linkID.equals(request.srcIP));
-              }
               LSA localUpdate = refreshLocalLSA();
               Vector<LSA> advertisements = new Vector<>();
               advertisements.add(localUpdate);
               broadcastLSAUpdate(advertisements, null);
+              break;
             }
           }
         }

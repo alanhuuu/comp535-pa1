@@ -660,7 +660,6 @@ public class Router {
         out.writeObject(update);
         out.flush();
         socket.close();
-        this.hasStarted=true;
         if (localUpdate != null) {
           Vector<LSA> advertisements = new Vector<>();
           advertisements.add(localUpdate);
@@ -673,7 +672,7 @@ public class Router {
         e.printStackTrace();
 
       }}
-
+    this.hasStarted=true;
 
   }
 
@@ -782,7 +781,13 @@ public class Router {
     for(Link link : ports) {
       link =null;
     };
-
+    try{
+    serverSocket.close();
+    System.exit(0);
+    }
+    catch(Exception e){
+      System.out.println("Failed to close server socket.");
+    }
   }
 
   /**

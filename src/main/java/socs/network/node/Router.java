@@ -99,6 +99,22 @@ public class Router {
     System.out.println(lsd.getShortestPath(destinationIP));
   }
 
+  private void removeLink(int portNumber, Link expectedLink) {
+    LSA update;
+
+    synchronized (lsd._store) {
+      if (ports[portNumber] != expectedLink) {
+        return;
+      }
+      ports[portNumber] = null;
+      update = refreshLocalLSA();
+    }
+
+    Vector<LSA> advertisements = new Vector<>();
+    advertisements.add(update);
+    broadcastLSAUpdate(advertisements, null);
+  }
+
   /**
    * disconnect with the router identified by the given destination ip address
    * Notice: this command should trigger the synchronization of database
@@ -114,11 +130,7 @@ public class Router {
     sendDisconnectMessage(ports[portNumber]);
     ports[portNumber] = null;
 
-    
-    LSA localUpdate = refreshLocalLSA();
-    Vector<LSA> advertisements = new Vector<>();
-    advertisements.add(localUpdate);
-    broadcastLSAUpdate(advertisements, null);
+    removeLink(portNumber, ports[portNumber]);
   }
 
   private void sendDisconnectMessage(Link link){
@@ -275,18 +287,10 @@ public class Router {
           if (consecutiveMissedHeartbeats.getOrDefault(link, 0) >= 3) {
             System.out.println("Neighbor " + link.router2.simulatedIPAddress + " is considered unreachable.");
 
-            ports[i] = null;
-
             synchronized (consecutiveMissedHeartbeats) {
               consecutiveMissedHeartbeats.remove(link);
             }
-
-            LSA update = refreshLocalLSA();
-
-            Vector<LSA> advertisements = new Vector<>();
-            advertisements.add(update);
-
-            broadcastLSAUpdate(advertisements, null);
+            removeLink(i, link);
           }
         }
 
@@ -351,12 +355,7 @@ public class Router {
             if (link !=null && link.router2!= null && link.router2.simulatedIPAddress.equals(request.srcIP)){
               System.out.println("received disconnect from " + request.srcIP);
 
-              ports[i] = null;
-
-              LSA localUpdate = refreshLocalLSA();
-              Vector<LSA> advertisements = new Vector<>();
-              advertisements.add(localUpdate);
-              broadcastLSAUpdate(advertisements, null);
+              removeLink(i, link);
               break;
             }
           }

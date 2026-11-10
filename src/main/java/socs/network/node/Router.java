@@ -103,7 +103,7 @@ public class Router {
     LSA update;
 
     synchronized (lsd._store) {
-      if (ports[portNumber] != expectedLink) {
+      if (expectedLink == null || ports[portNumber] != expectedLink) {
         return;
       }
       ports[portNumber] = null;
@@ -127,9 +127,18 @@ public class Router {
       return;
     }
 
-    sendDisconnectMessage(ports[portNumber]);
-    ports[portNumber] = null;
+    Link link;
 
+    synchronized (lsd._store) {
+      link  = ports[portNumber];
+    }
+
+    if (link == null) {
+      System.out.println("No link attached to port " + portNumber);
+      return;
+    }
+
+    sendDisconnectMessage(ports[portNumber]);
     removeLink(portNumber, ports[portNumber]);
   }
 
